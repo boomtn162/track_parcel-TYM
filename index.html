@@ -26,7 +26,7 @@
 <script src="common.js"></script>
 <script>
 /* =====================================================================
-   หน้าลูกค้า: เข้าระบบด้วย Username = เลขที่พัสดุ, Password = เบอร์โทร หรือ เลขบัตรประชาชน ของผู้ส่งหรือผู้รับ
+   หน้าลูกค้า: เข้าระบบด้วย Username = เลขที่พัสดุ, Password = เบอร์โทรผู้ส่งหรือผู้รับ
    ===================================================================== */
 const Track = { id: '', phone: '', results: null, loading: false, error: '' };
 const SKEY = 'tym_track_login';
@@ -66,9 +66,8 @@ function loginView() {
     <form id="lf" autocomplete="off">
       <div class="field"><label for="uid">เลขที่ใบส่งของ <span style="color:var(--ink-soft);font-weight:400">(Username)</span></label>
         <input id="uid" class="big" placeholder="เช่น PAN6911-4419-00057" value="${esc(Track.id)}" autocapitalize="characters" spellcheck="false"></div>
-      <div class="field"><label for="pw">เบอร์โทรศัพท์ หรือ เลขบัตรประชาชน <span style="color:var(--ink-soft);font-weight:400">(Password)</span></label>
-        <input id="pw" class="big" type="password" inputmode="numeric" maxlength="17" placeholder="เบอร์โทร 10 หลัก หรือ เลขบัตร 13 หลัก"></div>
-      <p class="hint" style="margin:-4px 0 10px">ใช้ของผู้ส่งหรือผู้รับก็ได้ ตามที่แจ้งไว้ตอนฝากส่ง</p>
+      <div class="field"><label for="pw">เบอร์โทรศัพท์ผู้ส่งหรือผู้รับ <span style="color:var(--ink-soft);font-weight:400">(Password)</span></label>
+        <input id="pw" class="big" type="password" inputmode="numeric" placeholder="เบอร์โทร 10 หลัก"></div>
       <label class="hint" style="display:flex;gap:6px;align-items:center;margin:-2px 0 12px"><input type="checkbox" id="show"> แสดงรหัสผ่าน</label>
       ${Track.error ? `<div class="err">${esc(Track.error)}</div>` : ''}
       <button class="btn" style="width:100%" ${Track.loading ? 'disabled' : ''}>${Track.loading ? 'กำลังตรวจสอบ…' : 'เข้าสู่ระบบ'}</button>
@@ -90,13 +89,12 @@ async function login(id, phone) {
   id = normId(id); phone = normPhone(phone);
   Track.id = id; Track.phone = ''; Track.error = '';
   if (!id) { Track.error = 'กรุณาใส่เลขที่ใบส่งของ'; return render(); }
-  if (phone.length < 9 || (phone.length > 10 && phone.length !== 13)) { Track.error = 'กรุณาใส่เบอร์โทร 10 หลัก หรือเลขบัตรประชาชน 13 หลัก'; return render(); }
-  if (phone.length === 13 && !validThaiId(phone)) { Track.error = 'เลขบัตรประชาชนไม่ถูกต้อง กรุณาตรวจสอบอีกครั้ง'; return render(); }
+  if (phone.length < 9) { Track.error = 'กรุณาใส่เบอร์โทรศัพท์ให้ครบ'; return render(); }
   Track.loading = true; render();
   try {
     const res = await API().track(id, phone);
     if (res.length) { Track.results = res; Track.phone = phone; ss.set({ id, phone }); }
-    else { Track.results = null; Track.error = 'เลขที่ใบส่งของ หรือรหัสผ่าน (เบอร์โทร/เลขบัตร) ไม่ถูกต้อง (ถ้าเพิ่งฝากส่ง ข้อมูลอาจยังไม่เข้าระบบ)'; ss.set(null); }
+    else { Track.results = null; Track.error = 'เลขที่ใบส่งของหรือเบอร์โทรศัพท์ไม่ถูกต้อง (ถ้าเพิ่งฝากส่ง ข้อมูลอาจยังไม่เข้าระบบ)'; ss.set(null); }
   } catch (e) { Track.results = null; Track.error = e.message && !/fetch/i.test(e.message) ? e.message : 'เชื่อมต่อระบบไม่ได้ กรุณาลองใหม่อีกครั้ง'; }
   Track.loading = false; render();
 }

@@ -21,18 +21,13 @@ const STAFF_PIN_DEFAULT = '4419';      // <-- เปลี่ยนแล้ว�
 const SHEET_NAME = 'Parcels';
 const COLS = ['id', 'sendDate', 'issuedAt', 'train', 'loadDate', 'originCode', 'originName',
   'destCode', 'destName', 'senderName', 'senderPhone', 'senderAddr', 'receiverName',
-  'receiverPhone', 'receiverAddr', 'items', 'weight', 'fee', 'eta', 'status', 'events', 'updatedAt',
-  'senderIdHash', 'receiverIdHash'];
-// เลขบัตรประชาชน: ไม่เก็บตัวเลขจริง เก็บเฉพาะ SHA-256(รหัสลับ ID_SALT + เลขบัตร) ใช้ตรวจตอนลูกค้าเข้าระบบเท่านั้น
-// และไม่ส่งค่าแฮชออกไปให้หน้าเว็บ (หน้าเจ้าหน้าที่เห็นแค่ว่า "มีเลขบัตรแล้ว")
-const HASH_COLS = { senderIdHash: 'senderIdNo', receiverIdHash: 'receiverIdNo' };
+  'receiverPhone', 'receiverAddr', 'items', 'weight', 'fee', 'eta', 'status', 'events', 'updatedAt'];
 const JSON_COLS = { items: true, events: true };
 const MAX_FAILS = 8;
 const LOCK_MINUTES = 15;
 
 // รันทุกครั้งที่เปลี่ยน STAFF_PIN_DEFAULT: บันทึก PIN ใหม่ทับของเดิม และสร้างชีตถ้ายังไม่มี
 function setup() {
-  idSalt_();
   const pin = String(STAFF_PIN_DEFAULT).trim();
   if (!pin) throw new Error('STAFF_PIN_DEFAULT ว่างไม่ได้');
   PropertiesService.getScriptProperties().setProperty('STAFF_PIN', pin);
@@ -43,37 +38,6 @@ function setup() {
 // ดูว่าตอนนี้ระบบใช้ PIN อะไรอยู่ (กดรันแล้วดูใน "บันทึกการดำเนินการ")
 function showPin() {
   Logger.log('PIN ที่ใช้อยู่: "' + currentPin_() + '"');
-}
-
-// รหัสลับสำหรับแฮชเลขบัตร สร้างอัตโนมัติครั้งแรก (ห้ามเปลี่ยน ไม่อย่างนั้นเลขบัตรที่เก็บไว้จะใช้เข้าระบบไม่ได้)
-function idSalt_() {
-  const props = PropertiesService.getScriptProperties();
-  let salt = props.getProperty('ID_SALT');
-  if (!salt) { salt = Utilities.getUuid() + Utilities.getUuid(); props.setProperty('ID_SALT', salt); }
-  return salt;
-}
-
-// ตรวจเลขบัตรประชาชนไทย 13 หลัก (หลักสุดท้ายเป็นเลขตรวจสอบ)
-function validThaiId_(d) {
-  if (!/^\d{13}$/.test(d)) return false;
-  let sum = 0;
-  for (let i = 0; i < 12; i++) sum += Number(d[i]) * (13 - i);
-  return (11 - (sum % 11)) % 10 === Number(d[12]);
-}
-
-function hashId_(idNo) {
-  const d = String(idNo || '').replace(/\D/g, '');
-  if (!validThaiId_(d)) return '';
-  const bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, idSalt_() + d, Utilities.Charset.UTF_8);
-  return bytes.map(function (b) { return ('0' + (b & 0xff).toString(16)).slice(-2); }).join('');
-}
-
-// ข้อมูลที่ส่งให้หน้าเจ้าหน้าที่: ตัดค่าแฮชออก เหลือแค่ว่ามี/ไม่มีเลขบัตร
-function staffView_(r) {
-  const o = {};
-  Object.keys(r).forEach(function (k) { if (!HASH_COLS[k]) o[k] = r[k]; });
-  o.hasSenderId = !!r.senderIdHash; o.hasReceiverId = !!r.receiverIdHash;
-  return o;
 }
 
 function currentPin_() {
@@ -96,7 +60,7 @@ function doPost(e) {
   let body = {};
   try { body = JSON.parse(e.postData.contents || '{}'); } catch (err) { return json_({ ok: false, error: 'bad json' }); }
   if (body.action === 'track') {          // ลูกค้า: ไม่ต้องใช้ PIN
-    try { return json_(track_(body.id, body.secret || body.phone)); } catch (err) { return json_({ ok: false, error: String(err) }); }
+    try { return json_(track_(body.id, body.phone)); } catch (err) { return json_({ ok: false, error: String(err) }); }
   }
   if (String(body.pin || '').trim() !== currentPin_()) {
     Utilities.sleep(800); // ชะลอการเดา PIN
@@ -107,7 +71,7 @@ function doPost(e) {
     lock.waitLock(20000);
     switch (body.action) {
       case 'login': return json_({ ok: true });
-      case 'list': return json_({ ok: true, parcels: readAll_().map(staffView_) });
+      case 'list': return json_({ ok: true, parcels: readAll_() });
       case 'upsert': return json_({ ok: true, saved: upsert_(body.parcels || []) });
       case 'delete': return json_({ ok: true, deleted: delete_(body.ids || []) });
       default: return json_({ ok: false, error: 'unknown action' });
@@ -121,14 +85,10 @@ function doPost(e) {
 
 /* ---------------- ลูกค้าเข้าระบบ: เลขที่พัสดุ + เบอร์โทร ---------------- */
 
-// secret = เบอร์โทร (9–10 หลัก) หรือ เลขบัตรประชาชน (13 หลัก) ของผู้ส่งหรือผู้รับ
-function track_(id, secret) {
+function track_(id, phone) {
   id = String(id || '').trim().toUpperCase().replace(/\s+/g, '');
-  secret = String(secret || '').replace(/\D/g, '');
-  if (!id || secret.length < 9) return { ok: false, error: 'กรุณาใส่เลขที่ใบส่งของ และเบอร์โทรศัพท์หรือเลขบัตรประชาชน' };
-  const byIdCard = secret.length === 13;
-  if (byIdCard && !validThaiId_(secret)) return { ok: false, error: 'เลขบัตรประชาชนไม่ถูกต้อง กรุณาตรวจสอบอีกครั้ง' };
-  const idHash = byIdCard ? hashId_(secret) : '';
+  phone = String(phone || '').replace(/\D/g, '');
+  if (!id || phone.length < 9) return { ok: false, error: 'กรุณาใส่เลขที่ใบส่งของและเบอร์โทรศัพท์' };
   const cache = CacheService.getScriptCache();
   const failKey = 'fail_' + id.slice(-11);
   const fails = Number(cache.get(failKey) || 0);
@@ -137,9 +97,7 @@ function track_(id, secret) {
   const short = /^(\d{4}-)?\d{5}$/.test(id);   // พิมพ์แค่ท้ายเลข เช่น 00057 หรือ 4419-00057
   const hits = readAll_().filter(function (r) {
     const idOk = r.id === id || (short && r.id.slice(-(id.length + 1)) === '-' + id);
-    if (!idOk) return false;
-    return byIdCard ? (r.senderIdHash === idHash || r.receiverIdHash === idHash)
-      : (r.senderPhone === secret || r.receiverPhone === secret);
+    return idOk && (r.senderPhone === phone || r.receiverPhone === phone);
   });
   if (!hits.length) {
     cache.put(failKey, String(fails + 1), LOCK_MINUTES * 60);
@@ -180,8 +138,6 @@ function sheet_() {
     sh.setFrozenRows(1);
     sh.getRange('A:A').setNumberFormat('@'); // เก็บเลขที่เป็นข้อความ
     sh.getRange(1, 1, sh.getMaxRows(), COLS.length).setNumberFormat('@');
-  } else if (sh.getLastColumn() < COLS.length) {
-    sh.getRange(1, 1, 1, COLS.length).setValues([COLS]).setFontWeight('bold');   // ชีตเดิม: เพิ่มหัวคอลัมน์ใหม่
   }
   return sh;
 }
@@ -220,23 +176,15 @@ function objToRow_(o) {
 function upsert_(parcels) {
   const sh = sheet_();
   const n = Math.max(sh.getLastRow() - 1, 0);
-  const old = n ? sh.getRange(2, 1, n, COLS.length).getValues() : [];
+  const ids = n ? sh.getRange(2, 1, n, 1).getValues().map(function (r) { return String(r[0]); }) : [];
   const index = {};
-  old.forEach(function (r, i) { if (r[0]) index[String(r[0])] = i + 2; });
+  ids.forEach(function (id, i) { if (id) index[id] = i + 2; });
   const now = new Date().toISOString();
   const append = [];
   parcels.forEach(function (p) {
     if (!p || !p.id) return;
     p.id = String(p.id).trim().toUpperCase();
     p.updatedAt = now;
-    // เลขบัตร: ถ้าส่งมาใหม่ (senderIdNo/receiverIdNo) ให้แฮชเก็บ ถ้าไม่ส่งมา ให้คงค่าเดิมไว้ ไม่เก็บเลขจริงเด็ดขาด
-    Object.keys(HASH_COLS).forEach(function (hc) {
-      const raw = p[HASH_COLS[hc]];
-      const h = raw ? hashId_(raw) : '';
-      p[hc] = h || (index[p.id] > 0 ? String(old[index[p.id] - 2][COLS.indexOf(hc)] || '') : '');
-      delete p[HASH_COLS[hc]];
-    });
-    delete p.hasSenderId; delete p.hasReceiverId;
     const row = objToRow_(p);
     if (index[p.id]) sh.getRange(index[p.id], 1, 1, COLS.length).setNumberFormat('@').setValues([row]);
     else { append.push(row); index[p.id] = -1; }

@@ -58,20 +58,6 @@ function ownerView(r) {
 }
 const normId = (s) => String(s || '').trim().toUpperCase().replace(/\s+/g, '');
 const normPhone = (s) => String(s || '').replace(/\D/g, '');
-// เลขบัตรประชาชนไทย 13 หลัก (หลักสุดท้ายเป็นเลขตรวจสอบ)
-function validThaiId(d) {
-  d = String(d || '').replace(/\D/g, '');
-  if (!/^\d{13}$/.test(d)) return false;
-  let sum = 0; for (let i = 0; i < 12; i++) sum += +d[i] * (13 - i);
-  return (11 - (sum % 11)) % 10 === +d[12];
-}
-// โหมดทดลองเท่านั้น: แฮชเลขบัตรในเบราว์เซอร์ (ระบบจริงแฮชที่ server ด้วยรหัสลับใน Apps Script)
-async function demoHashId(d) {
-  d = String(d || '').replace(/\D/g, '');
-  if (!validThaiId(d)) return '';
-  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('tym-demo-salt' + d));
-  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
-}
 // เลขพัสดุตรงกันไหม (รับทั้งเลขเต็ม หรือพิมพ์แค่ท้ายเลข เช่น 00057 / 4419-00057)
 const idMatches = (rid, q) => rid === q || (/^(\d{4}-)?\d{5}$/.test(q) && rid.endsWith('-' + q));
 
@@ -96,9 +82,9 @@ const Cloud = {
     catch (e) { throw new Error(CONN_ERR); }
     try { return await r.json(); } catch (e) { throw new Error(CONN_ERR); }
   },
-  // ลูกค้าเข้าระบบ: เลขพัสดุ + (เบอร์โทร หรือ เลขบัตรประชาชน) ไม่ต้องใช้ PIN
-  async track(id, secret) {
-    const r = await fetch(apiUrl(), { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action: 'track', id, secret }) }).then((x) => x.json());
+  // ลูกค้าเข้าระบบ: เลขพัสดุ + เบอร์โทร (ไม่ต้องใช้ PIN)
+  async track(id, phone) {
+    const r = await fetch(apiUrl(), { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action: 'track', id, phone }) }).then((x) => x.json());
     if (!r.ok) throw new Error(r.error); return r.results;
   },
   async login(pin) { Session.pin = pin; const r = await this.post({ action: 'login' }); if (!r.ok) throw new Error(r.error); },
@@ -111,28 +97,15 @@ const Local = {
   KEY: 'tym_parcels_demo',
   all() { let d = store(this.KEY); if (!Array.isArray(d)) { d = demoData(); store(this.KEY, d); } return d; },
   save(d) { store(this.KEY, d); },
-  async track(id, secret) {
-    id = normId(id); secret = normPhone(secret);
-    if (secret.length === 13 && !validThaiId(secret)) throw new Error('เลขบัตรประชาชนไม่ถูกต้อง กรุณาตรวจสอบอีกครั้ง');
-    const h = secret.length === 13 ? await demoHashId(secret) : '';
-    return this.all().filter((r) => idMatches(r.id, id) && secret && (h ? r.senderIdHash === h || r.receiverIdHash === h : r.senderPhone === secret || r.receiverPhone === secret))
-      .map((r) => { const o = ownerView(r); delete o.senderIdHash; delete o.receiverIdHash; return o; });
+  async track(id, phone) {
+    id = normId(id); phone = normPhone(phone);
+    return this.all().filter((r) => idMatches(r.id, id) && phone && (r.senderPhone === phone || r.receiverPhone === phone)).map(ownerView);
   },
   async login(pin) { if (pin !== CONFIG.DEMO_PIN) throw new Error('PIN ไม่ถูกต้อง'); Session.pin = pin; },
-  async list() {
-    return this.all().map((r) => { const o = JSON.parse(JSON.stringify(r)); o.hasSenderId = !!o.senderIdHash; o.hasReceiverId = !!o.receiverIdHash; delete o.senderIdHash; delete o.receiverIdHash; return o; });
-  },
+  async list() { return JSON.parse(JSON.stringify(this.all())); },
   async upsert(parcels) {
     const all = this.all(); const idx = Object.fromEntries(all.map((p, i) => [p.id, i]));
-    for (const p0 of parcels) {
-      const p = JSON.parse(JSON.stringify(p0)), prev = p.id in idx ? all[idx[p.id]] : {};
-      for (const [hc, raw] of [['senderIdHash', 'senderIdNo'], ['receiverIdHash', 'receiverIdNo']]) {
-        p[hc] = (p[raw] && await demoHashId(p[raw])) || prev[hc] || ''; delete p[raw];
-      }
-      delete p.hasSenderId; delete p.hasReceiverId;
-      p.updatedAt = new Date().toISOString();
-      if (p.id in idx) all[idx[p.id]] = p; else { idx[p.id] = all.length; all.push(p); }
-    }
+    parcels.forEach((p) => { p.updatedAt = new Date().toISOString(); if (p.id in idx) all[idx[p.id]] = p; else all.push(p); });
     this.save(all);
   },
   async del(ids) { this.save(this.all().filter((p) => !ids.includes(p.id))); }
