@@ -129,3 +129,7 @@ footer{color:var(--ink-soft);font-size:12.5px;text-align:center;padding:10px 16p
   .qr-slip{position:absolute;left:0;top:0;width:100%}
   .qr-slip .no-print{display:none}
 }
+.qp-row td{padding-top:0}
+.qp{display:flex;flex-wrap:wrap;gap:6px;align-items:center;background:var(--bad-bg);border-radius:9px;padding:8px}
+.qp-warn{flex:1 1 100%;color:var(--bad);font-size:13px}
+.qp input{flex:1 1 130px;min-width:0;border:1.5px solid var(--line);background:var(--card);border-radius:8px;padding:6px 9px;font-size:15px}
