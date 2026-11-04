@@ -143,7 +143,51 @@
     return { type: 'unknown' };
   }
 
-  const api = { parseLines, parseReceipt, parseManifest, thaiDateToISO };
+  // ---------- ไฟล์ Excel/CSV ที่ส่งออกจาก FMIS (เช่น FMIS_Parcel_Sent_4419_25691104.xlsx) ----------
+  // rows = อาร์เรย์ของแถว (แต่ละแถวเป็นอาร์เรย์ของค่าในช่อง) อ่านคอลัมน์จาก "ชื่อหัวตาราง" จึงไม่ขึ้นกับลำดับคอลัมน์
+  function validThaiId(d) {
+    d = String(d || '').replace(/\D/g, '');
+    if (!/^\d{13}$/.test(d)) return false;
+    let sum = 0; for (let i = 0; i < 12; i++) sum += +d[i] * (13 - i);
+    return (11 - (sum % 11)) % 10 === +d[12];
+  }
+  function parseFmisRows(rows) {
+    const norm = (v) => clean(v).replace(/\s+/g, '');
+    const hi = rows.findIndex((r) => (r || []).some((c) => /^เลขที่ใบส่ง/.test(norm(c))));
+    if (hi < 0) return null;
+    const head = rows[hi].map(norm);
+    const col = (...res) => head.findIndex((h) => res.some((re) => re.test(h)));
+    const C = {
+      id: col(/^เลขที่ใบส่ง/), sendDate: col(/^วันที่ส่ง$/), issuedAt: col(/^วัน\/?เวลาที่บันทึก/, /เวลาที่ออก/),
+      senderIdNo: col(/^รหัสผู้ส่ง$/, /บัตร.*ผู้ส่ง/, /ผู้ส่ง.*บัตร/), senderName: col(/^ชื่อผู้ส่ง$/),
+      senderPhone: col(/โทร.*ผู้ส่ง/, /ผู้ส่ง.*โทร/), receiverName: col(/^ชื่อผู้รับ$/),
+      receiverIdNo: col(/^รหัสผู้รับ$/, /บัตร.*ผู้รับ/, /ผู้รับ.*บัตร/), receiverPhone: col(/โทร.*ผู้รับ/, /ผู้รับ.*โทร/),
+      destName: col(/^สถานีรับ$/, /^สถานีปลายทาง$/), destCode: col(/^รหัสสถานีรับ$/, /^รหัสสถานีปลายทาง$/),
+      train: col(/^ขบวน/), fee: col(/^รวมยอด/, /^รวมเงิน/), originCode: col(/^รหัสสถานี$/), originName: col(/^สถานี$/)
+    };
+    const get = (r, k) => (C[k] >= 0 ? r[C[k]] : '');
+    const out = [], skipped = [];
+    rows.slice(hi + 1).forEach((r) => {
+      const id = norm(get(r, 'id')).toUpperCase();
+      if (!/^PAN\d{4}-\d{4}-\d{5}$/.test(id)) return;            // ข้ามแถวสรุปยอดท้ายไฟล์
+      const idNo = String(get(r, 'senderIdNo') || '').replace(/\D/g, '');
+      const rIdNo = String(get(r, 'receiverIdNo') || '').replace(/\D/g, '');
+      if (idNo && !validThaiId(idNo)) skipped.push(id);
+      out.push({
+        id, source: 'fmis',
+        sendDate: thaiDateToISO(clean(get(r, 'sendDate'))), issuedAt: thaiDateToISO(clean(get(r, 'issuedAt'))),
+        senderName: clean(get(r, 'senderName')), senderPhone: cleanPhone(get(r, 'senderPhone')),
+        senderIdNo: validThaiId(idNo) ? idNo : '', receiverName: clean(get(r, 'receiverName')),
+        receiverPhone: cleanPhone(get(r, 'receiverPhone')), receiverIdNo: validThaiId(rIdNo) ? rIdNo : '',
+        destName: clean(get(r, 'destName')), destCode: clean(get(r, 'destCode')), train: clean(get(r, 'train')),
+        originCode: clean(get(r, 'originCode')), originName: clean(get(r, 'originName')),
+        fee: num(get(r, 'fee'))
+      });
+    });
+    return { type: 'fmis', parcels: out, badIds: skipped };
+  }
+
+  const api = { parseLines, parseReceipt, parseManifest, parseFmisRows, validThaiId, thaiDateToISO };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.TYMParser = api;
 })(typeof window !== 'undefined' ? window : this);
