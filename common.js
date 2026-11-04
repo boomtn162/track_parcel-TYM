@@ -49,7 +49,7 @@ const STATUS = {
   delivered: { label: 'รับพัสดุแล้ว', icon: '✅', now: () => 'ผู้รับได้รับพัสดุเรียบร้อยแล้ว' },
   problem: { label: 'โปรดติดต่อสถานี', icon: '⚠️', now: () => 'พัสดุมีเรื่องต้องตรวจสอบ กรุณาติดต่อสถานี' }
 };
-const STEP_TITLE = { received: `รับฝากที่สถานี${CONFIG.STATION_NAME}`, loaded: 'ขึ้นขบวนรถ / ระหว่างทาง', arrived: 'ถึงสถานีปลายทาง', delivered: 'ผู้รับรับพัสดุแล้ว' };
+const STEP_TITLE = { received: 'รอขนส่ง', loaded: 'ขึ้นขบวนรถ / ระหว่างทาง', arrived: 'ถึงสถานีปลายทาง', delivered: 'ผู้รับรับพัสดุแล้ว' };
 
 /* ---------------- ข้อมูลที่ลูกค้าเห็นหลังเข้าระบบ (โหมดทดลอง — ระบบจริงทำที่ server ใน Code.gs) ---------------- */
 const maskPhone = (p) => { p = String(p || '').replace(/\D/g, ''); return p.length >= 4 ? p.slice(0, 3) + '-xxx-' + p.slice(-4) : ''; };
