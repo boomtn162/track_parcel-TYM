@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ติดตามพัสดุ สถานีตันหยงมัส</title>
+<meta name="description" content="ตรวจสอบสถานะพัสดุที่ฝากส่งทางรถไฟจากสถานีตันหยงมัส ด้วยเลขที่ใบส่งของและเบอร์โทรศัพท์">
+<meta name="theme-color" content="#123d6b">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23123d6b'/%3E%3Crect x='17' y='12' width='30' height='32' rx='7' fill='%23fff'/%3E%3Crect x='22' y='18' width='20' height='10' rx='2' fill='%23123d6b'/%3E%3Ccircle cx='25' cy='36' r='3' fill='%23e8892b'/%3E%3Ccircle cx='39' cy='36' r='3' fill='%23e8892b'/%3E%3Cpath d='M22 44l-5 8M42 44l5 8' stroke='%23fff' stroke-width='4' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="app.css">
+<style>
+.search .big{width:100%;border:1.5px solid var(--line);background:var(--bg);border-radius:10px;padding:12px 14px;font-size:17px}
+.search .big:focus{outline:none;border-color:var(--brand-2)}
+.search form#lf{display:block}
+.search #show{flex:none;width:18px;height:18px;margin:0}
+.search .field label{font-size:14px;color:var(--ink)}
+.err{background:var(--bad-bg);color:var(--bad);border-radius:10px;padding:9px 12px;font-size:14.5px;margin-bottom:12px}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script src="common.js"></script>
+<script>
+/* =====================================================================
+   หน้าลูกค้า: เข้าระบบด้วย Username = เลขที่พัสดุ, Password = เบอร์โทรผู้ส่งหรือผู้รับ
+   ===================================================================== */
+const Track = { id: '', phone: '', results: null, loading: false, error: '' };
+const SKEY = 'tym_track_login';
+const ss = { get() { try { return JSON.parse(sessionStorage.getItem(SKEY)); } catch (e) { return null; } },
+  set(v) { try { v ? sessionStorage.setItem(SKEY, JSON.stringify(v)) : sessionStorage.removeItem(SKEY); } catch (e) {} } };
+
+function render() {
+  const loggedIn = Track.results && Track.results.length;
+  $('#app').innerHTML = `
+  ${header('ตรวจสอบได้ว่าพัสดุของคุณถึงไหนแล้ว', loggedIn ? '<button class="staff-link" style="background:none;cursor:pointer" id="out">ออกจากระบบ</button>' : '')}
+  <main class="wrap">${loggedIn ? resultView() : loginView()}
+    <section class="card howto">
+      <h2>ขั้นตอนการขนส่งพัสดุ</h2>
+      <ol>
+        <li><b>รับฝากแล้ว</b> — สถานีออกใบส่งของให้ผู้ส่ง</li>
+        <li><b>อยู่ระหว่างขนส่ง</b> — พัสดุขึ้นขบวนรถไปสถานีปลายทาง</li>
+        <li><b>ถึงสถานีปลายทาง</b> — ผู้รับนำบัตรประชาชน (และเลขที่ใบส่งของ) ไปรับที่สถานี</li>
+        <li><b>รับพัสดุแล้ว</b> — ผู้รับลงชื่อรับของเรียบร้อย</li>
+      </ol>
+      ${CONFIG.STATION_PHONE || CONFIG.STATION_HOURS ? `<p class="hint">${esc(CONFIG.STATION_HOURS)} ${CONFIG.STATION_PHONE ? '· ติดต่อสถานี โทร <a href="tel:' + esc(CONFIG.STATION_PHONE.replace(/\D/g, '')) + '">' + esc(CONFIG.STATION_PHONE) + '</a>' : ''}</p>` : ''}
+    </section>
+  </main>
+  <footer>ข้อมูลอัปเดตโดยเจ้าหน้าที่สถานี${esc(CONFIG.STATION_NAME)} · เวลาที่แสดงอาจคลาดเคลื่อนจากการเดินรถจริง</footer>`;
+  if (loggedIn) {
+    $('#out').onclick = logout;
+    $('#rf').onclick = () => login(Track.id, Track.phone);
+  } else {
+    $('#lf').onsubmit = (e) => { e.preventDefault(); login($('#uid').value, $('#pw').value); };
+    $('#show').onchange = (e) => { $('#pw').type = e.target.checked ? 'text' : 'password'; };
+    (Track.id ? $('#pw') : $('#uid')).focus();
+  }
+}
+
+function loginView() {
+  return `<section class="card search">
+    <h2 style="margin:0 0 4px;font-size:18px">เข้าสู่ระบบติดตามพัสดุ</h2>
+    <p class="hint" style="margin:0 0 14px">ใช้ข้อมูลจากใบส่งของ/ใบเสร็จรับเงินที่ได้รับจากสถานี</p>
+    <form id="lf" autocomplete="off">
+      <div class="field"><label for="uid">เลขที่ใบส่งของ <span style="color:var(--ink-soft);font-weight:400">(Username)</span></label>
+        <input id="uid" class="big" placeholder="เช่น PAN6911-4419-00057" value="${esc(Track.id)}" autocapitalize="characters" spellcheck="false"></div>
+      <div class="field"><label for="pw">เบอร์โทรศัพท์ผู้ส่งหรือผู้รับ <span style="color:var(--ink-soft);font-weight:400">(Password)</span></label>
+        <input id="pw" class="big" type="password" inputmode="numeric" placeholder="เบอร์โทร 10 หลัก"></div>
+      <label class="hint" style="display:flex;gap:6px;align-items:center;margin:-2px 0 12px"><input type="checkbox" id="show"> แสดงรหัสผ่าน</label>
+      ${Track.error ? `<div class="err">${esc(Track.error)}</div>` : ''}
+      <button class="btn" style="width:100%" ${Track.loading ? 'disabled' : ''}>${Track.loading ? 'กำลังตรวจสอบ…' : 'เข้าสู่ระบบ'}</button>
+    </form>
+    <p class="hint">เลขที่ใบส่งของอยู่มุมขวาบนของใบส่งของ (ขึ้นต้นด้วย PAN) พิมพ์แค่ 5 หลักท้ายก็ได้ เช่น <b>00057</b></p>
+    ${isDemo() ? `<div class="demo-note">โหมดทดลอง (ข้อมูลสมมติ): ลองใช้เลขที่ <b>00002</b> รหัสผ่าน <b>0800000003</b> หรือเลขที่ <b>00003</b> รหัสผ่าน <b>0800000005</b></div>` : ''}
+  </section>`;
+}
+
+function resultView() {
+  return `<section class="card search" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <div style="flex:1;min-width:0">เข้าระบบด้วยเลขที่ <b class="pid" style="font-size:15px">${esc(Track.results.length === 1 ? Track.results[0].id : Track.id)}</b></div>
+      <button class="btn ghost sm" id="rf">↻ อัปเดตสถานะ</button>
+    </section>
+    <section class="results" aria-live="polite">${Track.results.map(parcelCard).join('')}</section>`;
+}
+
+async function login(id, phone) {
+  id = normId(id); phone = normPhone(phone);
+  Track.id = id; Track.phone = ''; Track.error = '';
+  if (!id) { Track.error = 'กรุณาใส่เลขที่ใบส่งของ'; return render(); }
+  if (phone.length < 9) { Track.error = 'กรุณาใส่เบอร์โทรศัพท์ให้ครบ'; return render(); }
+  Track.loading = true; render();
+  try {
+    const res = await API().track(id, phone);
+    if (res.length) { Track.results = res; Track.phone = phone; ss.set({ id, phone }); }
+    else { Track.results = null; Track.error = 'เลขที่ใบส่งของหรือเบอร์โทรศัพท์ไม่ถูกต้อง (ถ้าเพิ่งฝากส่ง ข้อมูลอาจยังไม่เข้าระบบ)'; ss.set(null); }
+  } catch (e) { Track.results = null; Track.error = e.message && !/fetch/i.test(e.message) ? e.message : 'เชื่อมต่อระบบไม่ได้ กรุณาลองใหม่อีกครั้ง'; }
+  Track.loading = false; render();
+}
+
+function logout() { ss.set(null); Track.results = null; Track.phone = ''; Track.error = ''; render(); }
+
+function parcelCard(p) {
+  const st = STATUS[p.status] || STATUS.received;
+  const rank = RANK[p.status] || 0;
+  const evOf = (s) => (p.events || []).filter((e) => e.s === s).pop();
+  const curStep = p.status === 'problem' ? -1 : STEPS.indexOf(p.status);
+  const lastEv = (p.events || []).slice(-1)[0];
+  const tl = STEPS.map((s, i) => {
+    const ev = evOf(s);
+    const done = p.status !== 'problem' ? rank >= RANK[s] : !!ev;
+    const cls = done ? 'done' + (i === curStep ? ' cur' : '') : 'todo';
+    const title = s === 'arrived' ? `ถึงสถานี${esc(p.destName)}` : s === 'loaded' && p.train ? `ขึ้นขบวนรถ ${esc(p.train)}` : STEP_TITLE[s];
+    const note = ev && ev.note && !title.includes(esc(ev.note)) ? ' · ' + esc(ev.note) : '';
+    let sub = ev ? fmtDate(ev.t) + note : '';
+    if (!ev && s === 'arrived' && p.eta && !done) sub = 'คาดว่า ' + fmtDate(p.eta);
+    return `<li class="${cls}"><span class="dot">${done ? '✓' : ''}</span><div class="t">${title}</div>${sub ? `<div class="when">${sub}</div>` : ''}</li>`;
+  }).join('');
+  const nowBg = { received: 'var(--info-bg)', loaded: 'var(--warn-bg)', arrived: 'var(--ok-bg)', delivered: 'var(--ok-bg)', problem: 'var(--bad-bg)' }[p.status];
+  const probNote = p.status === 'problem' && lastEv && lastEv.note ? ` (${esc(lastEv.note)})` : '';
+  return `<article class="card parcel">
+    <div class="head"><div><small style="color:var(--ink-soft)">เลขที่ใบส่งของ</small><div class="pid">${esc(p.id)}</div></div>
+      <span class="badge b-${esc(p.status)}">${st.icon} ${st.label}</span></div>
+    <div class="route">
+      <div class="st"><small>ต้นทาง</small><b>${esc(p.originName || CONFIG.STATION_NAME)}</b></div>
+      <div class="line">${p.train ? `<span class="train" style="left:${[0, 15, 50, 90, 90][rank] || 50}%">🚆 ${esc(p.train)}</span>` : ''}</div>
+      <div class="st r"><small>ปลายทาง</small><b>${esc(p.destName || '-')}</b></div>
+    </div>
+    <div class="now" style="background:${nowBg}">${esc(st.now(p))}${probNote}</div>
+    <div class="meta">
+      <div><small>วันที่ฝากส่ง</small>${fmtDate(p.sendDate, false) || '-'}</div>
+      <div><small>สินค้า</small>${esc(itemsText(p.items)) || '-'}</div>
+      ${p.senderName ? `<div><small>ผู้ส่ง</small>${esc(p.senderName)} <span style="white-space:nowrap">${esc(p.senderPhone || '')}</span></div>` : ''}
+      ${p.receiverName ? `<div><small>ผู้รับ</small>${esc(p.receiverName)} <span style="white-space:nowrap">${esc(p.receiverPhone || '')}</span></div>` : ''}
+      ${p.weight ? `<div><small>น้ำหนัก</small>${esc(p.weight)} กก.</div>` : ''}
+    </div>
+    <ol class="tl">${tl}</ol>
+  </article>`;
+}
+
+/* ---------------- start ---------------- */
+(function start() {
+  const qs = new URLSearchParams(location.search);
+  const saved = ss.get();
+  if (saved && saved.id && saved.phone) return login(saved.id, saved.phone);
+  Track.id = normId(qs.get('id') || qs.get('q') || '');   // ลิงก์จาก QR จะกรอกเลขที่ให้อัตโนมัติ
+  render();
+})();
+</script>
+</body>
+</html>

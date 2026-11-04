@@ -1,0 +1,402 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>เจ้าหน้าที่ · พัสดุตันหยงมัส</title>
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#123d6b">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23123d6b'/%3E%3Crect x='17' y='12' width='30' height='32' rx='7' fill='%23fff'/%3E%3Crect x='22' y='18' width='20' height='10' rx='2' fill='%23123d6b'/%3E%3Ccircle cx='25' cy='36' r='3' fill='%23e8892b'/%3E%3Ccircle cx='39' cy='36' r='3' fill='%23e8892b'/%3E%3Cpath d='M22 44l-5 8M42 44l5 8' stroke='%23fff' stroke-width='4' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="app.css">
+</head>
+<body class="wide">
+<div id="app"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="parser.js"></script>
+<script src="common.js"></script>
+<script>
+/* =====================================================================
+   หน้าเจ้าหน้าที่
+   ===================================================================== */
+const Staff = { parcels: [], tab: 'list', filter: { q: '', status: '', date: '', train: '' }, sel: new Set(), importPreview: null, busy: false };
+
+function staffHeader() {
+  return header(`ระบบเจ้าหน้าที่${isDemo() ? ' · <b style="color:#ffd08a">โหมดทดลอง</b>' : ''}`, '<a class="staff-link" href="index.html" target="_blank">หน้าลูกค้า ↗</a>');
+}
+
+function renderStaff() {
+  document.body.classList.add('wide');
+  if (!Session.pin) {
+    $('#app').innerHTML = `${staffHeader()}<main class="wrap"><section class="card search" style="max-width:420px;margin-left:auto;margin-right:auto">
+      <label for="pin">รหัส PIN เจ้าหน้าที่</label>
+      <form id="lf"><input id="pin" type="password" inputmode="numeric" autocomplete="current-password"><button class="btn">เข้าสู่ระบบ</button></form>
+      ${isDemo() ? `<p class="hint">โหมดทดลอง PIN คือ ${esc(CONFIG.DEMO_PIN)}</p>` : ''}
+    </section></main>`;
+    $('#pin').focus();
+    $('#lf').onsubmit = async (e) => {
+      e.preventDefault();
+      try { await API().login($('#pin').value.trim()); sessionStorage.setItem('tym_pin', Session.pin); await reload(); }
+      catch (err) { Session.pin = ''; toast(err.message || 'เข้าสู่ระบบไม่สำเร็จ'); }
+    };
+    return;
+  }
+  const tabs = [['list', 'รายการพัสดุ'], ['import', 'นำเข้า PDF'], ['add', 'เพิ่มเอง'], ['settings', 'ตั้งค่า']];
+  $('#app').innerHTML = `${staffHeader()}<main class="wrap">
+    <nav class="tabs">${tabs.map(([k, l]) => `<button data-tab="${k}" class="${Staff.tab === k ? 'on' : ''}">${l}</button>`).join('')}</nav>
+    <div id="pane"></div></main>`;
+  document.querySelectorAll('[data-tab]').forEach((b) => (b.onclick = () => { Staff.tab = b.dataset.tab; renderStaff(); }));
+  ({ list: paneList, import: paneImport, add: () => paneEdit(null, true), settings: paneSettings })[Staff.tab]();
+}
+
+async function reload() {
+  try { Staff.parcels = await API().list(); }
+  catch (e) { toast('โหลดข้อมูลไม่สำเร็จ: ' + e.message); if (/PIN/.test(e.message)) { Session.pin = ''; sessionStorage.removeItem('tym_pin'); } }
+  renderStaff();
+}
+
+async function save(parcels, msg) {
+  if (!parcels.length) return;
+  Staff.busy = true;
+  try {
+    await API().upsert(parcels);
+    const idx = Object.fromEntries(Staff.parcels.map((p, i) => [p.id, i]));
+    parcels.forEach((p) => { if (p.id in idx) Staff.parcels[idx[p.id]] = p; else Staff.parcels.push(p); });
+    toast(msg || `บันทึกแล้ว ${parcels.length} รายการ`);
+  } catch (e) { toast('บันทึกไม่สำเร็จ: ' + e.message, 4000); }
+  Staff.busy = false;
+}
+
+function setStatus(p, status, note, t) {
+  const q = JSON.parse(JSON.stringify(p));
+  q.status = status;
+  q.events = (q.events || []).concat([{ s: status, t: t || nowLocalISO(), note: note || '' }]);
+  return q;
+}
+
+function filtered() {
+  const f = Staff.filter, q = f.q.trim().toLowerCase();
+  return Staff.parcels.filter((p) => {
+    if (f.status && p.status !== f.status) return false;
+    if (f.date && p.sendDate !== f.date) return false;
+    if (f.train && String(p.train) !== f.train) return false;
+    if (q) {
+      const hay = [p.id, p.senderName, p.receiverName, p.senderPhone, p.receiverPhone, p.destName, p.destCode, itemsText(p.items)].join(' ').toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  }).sort((a, b) => String(b.issuedAt || b.sendDate).localeCompare(String(a.issuedAt || a.sendDate)) || b.id.localeCompare(a.id));
+}
+
+function paneList() {
+  const f = Staff.filter;
+  const base = Staff.parcels.filter((p) => !f.date || p.sendDate === f.date);
+  const count = (s) => base.filter((p) => p.status === s).length;
+  const trains = [...new Set(Staff.parcels.map((p) => p.train).filter(Boolean))].sort();
+  const rows = filtered();
+  $('#pane').innerHTML = `
+    <div class="stats">${['', ...STEPS, 'problem'].map((s) => `<button class="stat ${f.status === s ? 'on' : ''}" data-st="${s}"><b>${s ? count(s) : base.length}</b><span>${s ? STATUS[s].icon + ' ' + STATUS[s].label : 'ทั้งหมด'}</span></button>`).join('')}</div>
+    <div class="toolbar">
+      <input type="search" id="fq" placeholder="ค้นหา เลขที่ ชื่อ เบอร์ ปลายทาง" value="${esc(f.q)}">
+      <input type="date" id="fd" value="${esc(f.date)}" title="วันที่ฝากส่ง">
+      <select id="ft"><option value="">ทุกขบวน</option>${trains.map((t) => `<option ${f.train === t ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select>
+      <button class="btn ghost sm" id="today">วันนี้</button>
+      <button class="btn ghost sm" id="clr">ล้างตัวกรอง</button>
+      <button class="btn ghost sm" id="rl">↻ โหลดใหม่</button>
+    </div>
+    <div class="tbl-wrap"><table class="tbl"><thead><tr>
+      <th><input type="checkbox" id="all" ${rows.length && rows.every((p) => Staff.sel.has(p.id)) ? 'checked' : ''}></th>
+      <th>เลขที่</th><th>ปลายทาง</th><th class="hide-sm">ผู้ส่ง → ผู้รับ</th><th class="hide-sm">สินค้า</th><th>ขบวน</th><th>สถานะ</th></tr></thead>
+      <tbody>${rows.map((p) => `<tr class="${Staff.sel.has(p.id) ? 'sel' : ''}">
+        <td><input type="checkbox" data-sel="${esc(p.id)}" ${Staff.sel.has(p.id) ? 'checked' : ''}></td>
+        <td class="mono"><a href="#" data-edit="${esc(p.id)}">${esc(p.id)}</a><div class="muted">${fmtDate(p.sendDate, false)}</div></td>
+        <td>${esc(p.destName)}<div class="muted">${esc(p.destCode)}</div></td>
+        <td class="hide-sm">${esc(p.senderName || '-')} <span class="muted">${esc(p.senderPhone || '')}</span><div class="muted">→ ${esc(p.receiverName || '-')} ${esc(p.receiverPhone || '')}</div>${!p.senderPhone && !p.receiverPhone ? '<div class="muted" style="color:var(--bad)">⚠️ ยังไม่มีเบอร์ ลูกค้าเข้าระบบไม่ได้ — นำเข้าใบส่งของ</div>' : ''}</td>
+        <td class="hide-sm">${esc(itemsText(p.items))}<div class="muted">${p.weight ? esc(p.weight) + ' กก.' : ''}</div></td>
+        <td>${esc(p.train || '-')}</td>
+        <td><span class="badge b-${esc(p.status)}">${STATUS[p.status] ? STATUS[p.status].label : esc(p.status)}</span></td>
+      </tr>`).join('') || `<tr><td colspan="7" class="empty">ไม่มีรายการ — นำเข้าไฟล์ PDF จากแท็บ “นำเข้า PDF”</td></tr>`}</tbody></table></div>
+    <div class="bulk">
+      <b>เลือก ${Staff.sel.size} รายการ</b>
+      <button class="btn sm warn" data-bulk="loaded">🚆 ขึ้นขบวนแล้ว</button>
+      <button class="btn sm ok" data-bulk="arrived">📍 ถึงปลายทาง</button>
+      <button class="btn sm ok" data-bulk="delivered">✅ รับของแล้ว</button>
+      <button class="btn sm bad" data-bulk="problem">⚠️ มีปัญหา</button>
+      <span style="flex:1"></span>
+      <button class="btn ghost sm" id="csv">ส่งออก CSV</button>
+      <button class="btn ghost sm" id="delsel">ลบ</button>
+    </div>`;
+
+  const set = (k, v) => { Staff.filter[k] = v; paneList(); };
+  $('#fq').oninput = (e) => { Staff.filter.q = e.target.value; clearTimeout(paneList.t); paneList.t = setTimeout(() => { paneList(); const el = $('#fq'); el.focus(); el.setSelectionRange(el.value.length, el.value.length); }, 250); };
+  $('#fd').onchange = (e) => set('date', e.target.value);
+  $('#ft').onchange = (e) => set('train', e.target.value);
+  $('#today').onclick = () => set('date', todayISO());
+  $('#clr').onclick = () => { Staff.filter = { q: '', status: '', date: '', train: '' }; paneList(); };
+  $('#rl').onclick = reload;
+  document.querySelectorAll('[data-st]').forEach((b) => (b.onclick = () => set('status', b.dataset.st)));
+  $('#all').onchange = (e) => { rows.forEach((p) => (e.target.checked ? Staff.sel.add(p.id) : Staff.sel.delete(p.id))); paneList(); };
+  document.querySelectorAll('[data-sel]').forEach((c) => (c.onchange = () => { c.checked ? Staff.sel.add(c.dataset.sel) : Staff.sel.delete(c.dataset.sel); paneList(); }));
+  document.querySelectorAll('[data-edit]').forEach((a) => (a.onclick = (e) => { e.preventDefault(); openEdit(a.dataset.edit); }));
+  document.querySelectorAll('[data-bulk]').forEach((b) => (b.onclick = () => bulkDialog(b.dataset.bulk)));
+  $('#csv').onclick = () => exportCSV(Staff.sel.size ? Staff.parcels.filter((p) => Staff.sel.has(p.id)) : rows);
+  $('#delsel').onclick = async () => {
+    if (!Staff.sel.size || !confirm(`ลบ ${Staff.sel.size} รายการ? ลบแล้วกู้คืนไม่ได้`)) return;
+    const ids = [...Staff.sel];
+    try { await API().del(ids); Staff.parcels = Staff.parcels.filter((p) => !Staff.sel.has(p.id)); Staff.sel.clear(); toast(`ลบแล้ว ${ids.length} รายการ`); } catch (e) { toast('ลบไม่สำเร็จ: ' + e.message); }
+    paneList();
+  };
+}
+
+function modal(html, onMount) {
+  const bg = document.createElement('div'); bg.className = 'modal-bg';
+  bg.innerHTML = `<div class="modal" role="dialog">${html}</div>`;
+  bg.onclick = (e) => { if (e.target === bg) bg.remove(); };
+  document.body.appendChild(bg);
+  onMount && onMount(bg, () => bg.remove());
+}
+
+function bulkDialog(status) {
+  const ids = [...Staff.sel];
+  if (!ids.length) { toast('เลือกรายการก่อน (ติ๊กช่องหน้าเลขที่)'); return; }
+  const list = Staff.parcels.filter((p) => Staff.sel.has(p.id));
+  const trains = [...new Set(list.map((p) => p.train).filter(Boolean))];
+  modal(`<h2>${STATUS[status].icon} เปลี่ยนสถานะเป็น “${STATUS[status].label}” (${ids.length} รายการ)</h2>
+    <div class="grid2">
+      <div class="field"><label>วันเวลา</label><input type="datetime-local" id="bt" value="${nowLocalISO().slice(0, 16)}"></div>
+      ${status === 'loaded' ? `<div class="field"><label>ขบวนรถ</label><input id="btr" value="${esc(trains.length === 1 ? trains[0] : '')}" placeholder="ใช้ขบวนเดิมของแต่ละรายการ"></div>` : '<div></div>'}
+      ${status === 'loaded' ? `<div class="field"><label>คาดว่าจะถึงปลายทาง (ถ้ามี)</label><input type="datetime-local" id="beta"></div>` : ''}
+    </div>
+    <div class="field"><label>หมายเหตุที่ลูกค้าจะเห็น (ไม่บังคับ)</label><input id="bn" placeholder="${status === 'problem' ? 'เช่น รอเอกสารเพิ่มเติม' : ''}"></div>
+    <div class="row-end"><button class="btn ghost" data-x>ยกเลิก</button><button class="btn" id="bok">บันทึก</button></div>`,
+  (bg, close) => {
+    bg.querySelector('[data-x]').onclick = close;
+    $('#bok', bg).onclick = async () => {
+      const t = ($('#bt', bg).value || nowLocalISO()).padEnd(19, ':00').slice(0, 19);
+      const note = $('#bn', bg).value.trim();
+      const tr = status === 'loaded' ? $('#btr', bg).value.trim() : '';
+      const eta = status === 'loaded' ? $('#beta', bg).value : '';
+      const upd = list.map((p) => {
+        const q = setStatus(p, status, note || (status === 'loaded' ? `ขึ้นขบวนรถ ${tr || p.train}` : status === 'arrived' ? `ถึงสถานี${p.destName}` : ''), t);
+        if (tr) q.train = tr;
+        if (status === 'loaded') { q.loadDate = t.slice(0, 10); if (eta) q.eta = eta; }
+        return q;
+      });
+      $('#bok', bg).disabled = true;
+      await save(upd); Staff.sel.clear(); close(); paneList();
+    };
+  });
+}
+
+function openEdit(id) {
+  const p = Staff.parcels.find((x) => x.id === id);
+  if (!p) return;
+  modal(`<div id="editPane"></div>`, (bg, close) => paneEdit(p, false, $('#editPane', bg), close));
+}
+
+function paneEdit(p, isNew, host, close) {
+  host = host || $('#pane');
+  p = p || { id: '', sendDate: todayISO(), issuedAt: '', train: '', originCode: CONFIG.STATION_CODE, originName: CONFIG.STATION_NAME, destCode: '', destName: '', senderName: '', senderPhone: '', senderAddr: '', receiverName: '', receiverPhone: '', receiverAddr: 'รอรับที่สถานี', items: [{ desc: '', qty: 1, unit: 'กล่อง' }], weight: '', fee: '', eta: '', status: 'received', events: [] };
+  const it = p.items[0] || { desc: '', qty: 1, unit: '' };
+  const fld = (k, l, v, attrs = '') => `<div class="field"><label>${l}</label><input data-k="${k}" value="${esc(v)}" ${attrs}></div>`;
+  host.innerHTML = `<div class="card">
+    <h2 style="margin-top:0">${isNew ? 'เพิ่มพัสดุเอง' : 'รายละเอียดพัสดุ'}</h2>
+    <div class="grid2">
+      ${fld('id', 'เลขที่ใบส่งของ', p.id, isNew ? 'placeholder="PAN6911-4419-00000" required' : 'readonly')}
+      ${fld('sendDate', 'วันที่ฝากส่ง', p.sendDate, 'type="date"')}
+      ${fld('train', 'ขบวนรถ', p.train, 'inputmode="numeric"')}
+      ${fld('eta', 'คาดว่าจะถึง (ถ้ามี)', (p.eta || '').slice(0, 16), 'type="datetime-local"')}
+      ${fld('destCode', 'รหัสสถานีปลายทาง', p.destCode, 'inputmode="numeric"')}
+      ${fld('destName', 'สถานีปลายทาง', p.destName)}
+      ${fld('senderName', 'ชื่อผู้ส่ง', p.senderName)}
+      ${fld('senderPhone', 'โทรผู้ส่ง', p.senderPhone, 'inputmode="tel"')}
+      ${fld('receiverName', 'ชื่อผู้รับ', p.receiverName)}
+      ${fld('receiverPhone', 'โทรผู้รับ', p.receiverPhone, 'inputmode="tel"')}
+    </div>
+    ${fld('senderAddr', 'ที่อยู่ผู้ส่ง', p.senderAddr)}
+    ${fld('receiverAddr', 'ที่อยู่ผู้รับ', p.receiverAddr)}
+    <div class="grid2">
+      ${fld('_desc', 'สินค้า', it.desc)}
+      <div class="grid2" style="gap:0 8px">${fld('_qty', 'จำนวน', it.qty, 'type="number" min="1"')}${fld('_unit', 'หน่วย', it.unit)}</div>
+      ${fld('weight', 'น้ำหนัก (กก.)', p.weight, 'type="number" step="0.1"')}
+      ${fld('fee', 'ค่าระวาง+ค่าธรรมเนียม (บาท)', p.fee, 'type="number" step="0.01"')}
+    </div>
+    ${p.items.length > 1 ? `<p class="hint">มีสินค้า ${p.items.length} รายการ: ${esc(itemsText(p.items))} (แก้ได้เฉพาะรายการแรก)</p>` : ''}
+    <div class="field"><label>สถานะ</label><select data-k="status">${Object.keys(STATUS).map((s) => `<option value="${s}" ${p.status === s ? 'selected' : ''}>${STATUS[s].icon} ${STATUS[s].label}</option>`).join('')}</select></div>
+    <div class="field"><label>หมายเหตุสำหรับการเปลี่ยนสถานะครั้งนี้ (ลูกค้าเห็น)</label><input data-k="_note"></div>
+    ${!isNew && p.events.length ? `<div class="field"><label>ประวัติสถานะ</label>${p.events.map((e) => `<div class="ev">${fmtDate(e.t)} — <b>${STATUS[e.s] ? STATUS[e.s].label : esc(e.s)}</b> ${esc(e.note || '')}</div>`).join('')}</div>` : ''}
+    <div class="row-end">
+      ${!isNew ? `<button class="btn ghost" id="qr">พิมพ์ QR ให้ลูกค้า</button><a class="btn ghost" style="text-decoration:none" target="_blank" href="${esc(trackUrl(p.id))}">ดูหน้าลูกค้า</a>` : ''}
+      ${close ? '<button class="btn ghost" id="cx">ปิด</button>' : ''}
+      <button class="btn" id="sv">บันทึก</button>
+    </div></div>`;
+  const v = (k) => { const el = host.querySelector(`[data-k="${k}"]`); return el ? el.value.trim() : ''; };
+  if (close) $('#cx', host).onclick = close;
+  if (!isNew) $('#qr', host).onclick = () => qrSlip(p);
+  $('#sv', host).onclick = async () => {
+    const id = v('id').toUpperCase().replace(/\s+/g, '');
+    if (!id) { toast('กรุณาใส่เลขที่ใบส่งของ'); return; }
+    if (isNew && Staff.parcels.some((x) => x.id === id)) { toast('มีเลขที่นี้อยู่แล้ว'); return; }
+    let q = JSON.parse(JSON.stringify(p));
+    ['sendDate', 'train', 'destCode', 'destName', 'senderName', 'senderAddr', 'receiverName', 'receiverAddr'].forEach((k) => (q[k] = v(k)));
+    q.id = id; q.senderPhone = v('senderPhone').replace(/\D/g, ''); q.receiverPhone = v('receiverPhone').replace(/\D/g, '');
+    q.eta = v('eta'); q.weight = +v('weight') || 0; q.fee = +v('fee') || 0;
+    q.items = [{ desc: v('_desc'), qty: +v('_qty') || 1, unit: v('_unit') }].concat(p.items.slice(1));
+    const st = v('status'), note = v('_note');
+    if (isNew) { q.issuedAt = q.issuedAt || nowLocalISO(); q.events = []; q = setStatus(q, 'received', '', q.issuedAt); if (st !== 'received') q = setStatus(q, st, note); }
+    else if (st !== p.status || note) q = setStatus(q, st, note);
+    await save([q]);
+    if (close) { close(); paneList(); } else { Staff.tab = 'list'; renderStaff(); }
+  };
+}
+
+const trackUrl = (id) => new URL('index.html?id=' + encodeURIComponent(id), location.href).toString();
+
+function qrSlip(p) {
+  modal(`<div class="qr-slip">
+      <h2>ติดตามพัสดุ สถานี${esc(CONFIG.STATION_NAME)}</h2>
+      <div id="qrBox"></div>
+      <div class="pid" style="margin-top:8px">${esc(p.id)}</div>
+      <div>ปลายทาง: ${esc(p.destName)} ${p.train ? '· ขบวน ' + esc(p.train) : ''}</div>
+      <p class="hint">สแกนแล้วใส่เบอร์โทรศัพท์ผู้ส่งหรือผู้รับเป็นรหัสผ่าน เพื่อดูสถานะพัสดุ</p>
+      <div class="row-end no-print" style="justify-content:center"><button class="btn ghost" data-x>ปิด</button><button class="btn" id="pr">พิมพ์</button></div>
+    </div>`, (bg, close) => {
+    const box = $('#qrBox', bg);
+    if (window.QRCode) new QRCode(box, { text: trackUrl(p.id), width: 180, height: 180, correctLevel: QRCode.CorrectLevel.M });
+    else box.textContent = trackUrl(p.id);
+    bg.querySelector('[data-x]').onclick = close;
+    $('#pr', bg).onclick = () => window.print();
+  });
+}
+
+function exportCSV(rows) {
+  const cols = [['id', 'เลขที่'], ['sendDate', 'วันที่ส่ง'], ['train', 'ขบวน'], ['destCode', 'รหัสปลายทาง'], ['destName', 'ปลายทาง'], ['senderName', 'ผู้ส่ง'], ['senderPhone', 'โทรผู้ส่ง'], ['receiverName', 'ผู้รับ'], ['receiverPhone', 'โทรผู้รับ'], ['items', 'สินค้า'], ['weight', 'น้ำหนัก'], ['fee', 'ค่าบริการ'], ['status', 'สถานะ']];
+  const cell = (p, k) => k === 'items' ? itemsText(p.items) : k === 'status' ? (STATUS[p.status] || {}).label : p[k];
+  const csv = '﻿' + [cols.map((c) => c[1])].concat(rows.map((p) => cols.map((c) => cell(p, c[0])))).map((r) => r.map((v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`).join(',')).join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  a.download = `parcels-${todayISO()}.csv`; a.click();
+}
+
+/* ---------------- นำเข้า PDF ---------------- */
+async function pdfToLines(file) {
+  if (!window.pdfjsLib) throw new Error('โหลดตัวอ่าน PDF ไม่สำเร็จ (ตรวจอินเทอร์เน็ต)');
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+  const out = [];
+  for (let n = 1; n <= pdf.numPages; n++) {
+    const tc = await (await pdf.getPage(n)).getTextContent();
+    const rows = {};
+    tc.items.forEach((it) => { if (!it.str.trim()) return; const y = Math.round(it.transform[5] / 3); (rows[y] = rows[y] || []).push(it); });
+    Object.keys(rows).sort((a, b) => b - a).forEach((y) => out.push(rows[y].sort((a, b) => a.transform[4] - b.transform[4]).map((i) => i.str).join(' | ')));
+  }
+  return out.join('\n');
+}
+
+// รวมข้อมูลจากไฟล์ที่อ่านได้เข้ากับข้อมูลเดิม -> คืนรายการที่จะบันทึก
+function mergeImports(parsed) {
+  const byId = Object.fromEntries(Staff.parcels.map((p) => [p.id, JSON.parse(JSON.stringify(p))]));
+  const touched = {}; const notes = {};
+  const get = (id) => byId[id] || null;
+  const fillIfEmpty = (p, src, keys) => keys.forEach((k) => { if ((p[k] === '' || p[k] == null || (Array.isArray(p[k]) && !p[k].length) || p[k] === 0) && src[k]) p[k] = src[k]; });
+  // ใบเสร็จก่อน แล้วค่อยใบนำมอบ (ให้ลำดับสถานะถูกต้อง)
+  parsed.filter((x) => x.type === 'receipt').forEach(({ parcel: r }) => {
+    let p = get(r.id); const isNew = !p;
+    const fields = ['sendDate', 'issuedAt', 'train', 'originCode', 'originName', 'destCode', 'destName', 'senderName', 'senderPhone', 'senderAddr', 'receiverName', 'receiverPhone', 'receiverAddr', 'items', 'weight', 'fee'];
+    if (isNew) { p = { id: r.id, eta: '', loadDate: '', status: 'received', events: [] }; fields.forEach((k) => (p[k] = r[k])); p = setStatus(p, 'received', '', r.issuedAt || r.sendDate); }
+    else { fields.forEach((k) => { if (r[k] && (k !== 'items' || r.items.length)) p[k] = r[k]; }); }
+    byId[r.id] = p; touched[r.id] = true; notes[r.id] = isNew ? 'ใหม่ (ใบส่งของ)' : 'อัปเดตข้อมูลจากใบส่งของ';
+  });
+  parsed.filter((x) => x.type === 'manifest').forEach((m) => {
+    m.parcels.forEach((r) => {
+      let p = get(r.id); const isNew = !p;
+      if (isNew) { p = { id: r.id, sendDate: m.loadDate, issuedAt: '', originCode: CONFIG.STATION_CODE, originName: CONFIG.STATION_NAME, senderName: '', senderPhone: '', senderAddr: '', receiverName: '', receiverPhone: '', receiverAddr: '', eta: '', status: 'received', events: [] }; p = setStatus(p, 'received', '', m.loadDate); }
+      fillIfEmpty(p, r, ['destCode', 'destName', 'items', 'weight', 'fee']);
+      p.train = m.train || p.train; p.loadDate = m.loadDate;
+      let note = isNew ? 'ใหม่ (ใบนำมอบ · ยังไม่มีเบอร์โทร)' : '';
+      if ((RANK[p.status] || 0) < RANK.loaded) {
+        const t = m.loadDate === todayISO() ? nowLocalISO() : m.loadDate;
+        p = setStatus(p, 'loaded', `ขึ้นขบวนรถ ${m.train}`, t);
+        note = (note ? note + ' · ' : '') + `ขึ้นขบวน ${m.train}`;
+      } else if (!isNew) note = note || 'ขึ้นขบวนแล้ว (ไม่เปลี่ยนสถานะ)';
+      byId[r.id] = p; touched[r.id] = true; notes[r.id] = notes[r.id] ? notes[r.id] + ' · ' + note : note;
+    });
+  });
+  return Object.keys(touched).map((id) => ({ p: byId[id], note: notes[id], isNew: !Staff.parcels.some((x) => x.id === id) }));
+}
+
+function paneImport() {
+  const pv = Staff.importPreview;
+  $('#pane').innerHTML = `<div class="card">
+    <h2 style="margin-top:0">นำเข้าไฟล์ PDF จากระบบรถไฟ</h2>
+    <p class="hint" style="margin-top:-6px">เลือกได้ทีละหลายไฟล์ ระบบจะแยกประเภทให้อัตโนมัติ<br>
+      • <b>ใบส่งของ/ใบเสร็จรับเงิน</b> → เพิ่มพัสดุใหม่ สถานะ “รับฝากแล้ว” พร้อมชื่อ/เบอร์ผู้ส่งผู้รับ<br>
+      • <b>ใบนำมอบสินค้าห่อวัตถุ (รวม)</b> → เปลี่ยนทุกพัสดุในใบเป็น “ขึ้นขบวนรถแล้ว” ตามขบวนในใบ</p>
+    <label class="drop" id="drop"><input type="file" id="files" accept="application/pdf" multiple hidden>
+      <div style="font-size:30px">📄</div><b>แตะเพื่อเลือกไฟล์ PDF</b><div class="hint">หรือลากไฟล์มาวางที่นี่</div></label>
+    <div id="pv" style="margin-top:14px">${pv ? previewHtml(pv) : ''}</div></div>`;
+  const inp = $('#files'), drop = $('#drop');
+  inp.onchange = () => handleFiles([...inp.files]);
+  drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('over'); };
+  drop.ondragleave = () => drop.classList.remove('over');
+  drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove('over'); handleFiles([...e.dataTransfer.files].filter((f) => /pdf$/i.test(f.type) || /\.pdf$/i.test(f.name))); };
+  if (pv) bindPreview();
+}
+
+async function handleFiles(files) {
+  if (!files.length) return;
+  $('#pv').innerHTML = `<p>กำลังอ่าน ${files.length} ไฟล์…</p>`;
+  const parsed = [], errors = [];
+  for (const f of files) {
+    try { const r = TYMParser.parseLines(await pdfToLines(f)); if (r.type === 'unknown') errors.push(`${f.name}: ไม่ใช่ใบส่งของหรือใบนำมอบ`); else parsed.push({ ...r, file: f.name }); }
+    catch (e) { errors.push(`${f.name}: ${e.message}`); }
+  }
+  Staff.importPreview = { changes: mergeImports(parsed), errors, files: parsed.map((p) => `${p.file} (${p.type === 'manifest' ? `ใบนำมอบ ขบวน ${p.train} · ${p.parcels.length} รายการ` : 'ใบส่งของ ' + p.parcel.id})`) };
+  paneImport();
+}
+
+function previewHtml(pv) {
+  return `${pv.files.length ? `<p class="hint">อ่านได้: ${pv.files.map(esc).join(', ')}</p>` : ''}
+    ${pv.errors.map((e) => `<p class="hint" style="color:var(--bad)">⚠️ ${esc(e)}</p>`).join('')}
+    ${pv.changes.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>เลขที่</th><th>ปลายทาง</th><th class="hide-sm">สินค้า</th><th>ขบวน</th><th>การเปลี่ยนแปลง</th></tr></thead><tbody>
+      ${pv.changes.map((c) => `<tr><td class="mono">${esc(c.p.id)}</td><td>${esc(c.p.destName)}</td><td class="hide-sm">${esc(itemsText(c.p.items))}</td><td>${esc(c.p.train)}</td><td class="${c.isNew ? 'chg-new' : 'chg-upd'}">${esc(c.note)}</td></tr>`).join('')}
+      </tbody></table></div>
+      <div class="row-end"><button class="btn ghost" id="pvx">ยกเลิก</button><button class="btn" id="pvok">บันทึก ${pv.changes.length} รายการ</button></div>` : ''}`;
+}
+function bindPreview() {
+  const x = $('#pvx'), ok = $('#pvok');
+  if (x) x.onclick = () => { Staff.importPreview = null; paneImport(); };
+  if (ok) ok.onclick = async () => { ok.disabled = true; await save(Staff.importPreview.changes.map((c) => c.p)); Staff.importPreview = null; Staff.tab = 'list'; renderStaff(); };
+}
+
+function paneSettings() {
+  $('#pane').innerHTML = `<div class="card">
+    <h2 style="margin-top:0">เชื่อมต่อฐานข้อมูล Google Sheets</h2>
+    <p class="hint" style="margin-top:-6px">วาง URL ของ Web App จาก Google Apps Script (ลงท้ายด้วย /exec) ดูวิธีติดตั้งใน README.md · ถ้าเว้นว่าง ระบบจะใช้โหมดทดลองซึ่งเก็บข้อมูลไว้เฉพาะในเครื่องนี้</p>
+    <div class="field"><label>Web App URL</label><input id="au" value="${esc(store('tym_api_url') || CONFIG.API_URL)}" placeholder="https://script.google.com/macros/s/.../exec"></div>
+    <div class="row-end" style="justify-content:flex-start">
+      <button class="btn" id="asv">บันทึกและเชื่อมต่อ</button>
+      ${isDemo() ? '<button class="btn ghost" id="dreset">ล้างข้อมูลทดลอง</button>' : ''}
+      <button class="btn ghost" id="lo">ออกจากระบบ</button>
+    </div>
+    <p class="hint">หมายเหตุ: ถ้าใส่ URL ไว้ในตัวแปร CONFIG.API_URL ใน index.html ลูกค้าทุกคนจะใช้ฐานข้อมูลจริงทันที (ค่าที่ตั้งตรงนี้มีผลเฉพาะเครื่องนี้)</p></div>`;
+  $('#asv').onclick = async () => {
+    const u = $('#au').value.trim();
+    if (u && !/^https:\/\/script\.google\.com\/.+\/exec$/.test(u)) { toast('URL ต้องขึ้นต้นด้วย https://script.google.com และลงท้ายด้วย /exec'); return; }
+    store('tym_api_url', u); Session.pin = ''; sessionStorage.removeItem('tym_pin'); Staff.parcels = []; toast(u ? 'บันทึกแล้ว กรุณาเข้าสู่ระบบด้วย PIN จริง' : 'กลับไปใช้โหมดทดลอง'); renderStaff();
+  };
+  const dr = $('#dreset'); if (dr) dr.onclick = () => { if (confirm('ล้างข้อมูลทดลองทั้งหมด?')) { Local.save([]); reload(); } };
+  $('#lo').onclick = () => { Session.pin = ''; sessionStorage.removeItem('tym_pin'); renderStaff(); };
+}
+
+/* ---------------- router ---------------- */
+/* ---------------- start ---------------- */
+if (sessionStorage.getItem('tym_pin')) { Session.pin = sessionStorage.getItem('tym_pin'); reload(); }
+else renderStaff();
+</script>
+</body>
+</html>
