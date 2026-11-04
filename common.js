@@ -43,7 +43,7 @@ const itemsText = (items) => (items || []).map((i) => `${i.desc} ${i.qty} ${i.un
 const STEPS = ['received', 'loaded', 'arrived', 'delivered'];
 const RANK = { problem: 0, received: 1, loaded: 2, arrived: 3, delivered: 4 };
 const STATUS = {
-  received: { label: 'รับฝากแล้ว', icon: '📦', now: (p) => `สถานี${CONFIG.STATION_NAME}รับพัสดุแล้ว กำลังรอขึ้นขบวนรถ${p.train ? ' ' + p.train : ''}` },
+  received: { label: 'รอขนส่ง', icon: '📦', now: (p) => `สถานี${CONFIG.STATION_NAME}รับพัสดุแล้ว กำลังรอขึ้นขบวนรถ${p.train ? ' ' + p.train : ''}` },
   loaded: { label: 'อยู่ระหว่างขนส่ง', icon: '🚆', now: (p) => `พัสดุขึ้นขบวนรถ${p.train ? ' ' + p.train : ''} แล้ว กำลังเดินทางไปสถานี${p.destName}${p.eta ? ' · คาดว่าจะถึง ' + fmtDate(p.eta) : ''}` },
   arrived: { label: 'ถึงสถานีปลายทาง', icon: '📍', now: (p) => `พัสดุถึงสถานี${p.destName}แล้ว ผู้รับสามารถไปรับได้ที่สถานี (นำบัตรประชาชนไปด้วย)` },
   delivered: { label: 'รับพัสดุแล้ว', icon: '✅', now: () => 'ผู้รับได้รับพัสดุเรียบร้อยแล้ว' },
