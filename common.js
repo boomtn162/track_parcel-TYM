@@ -4,11 +4,11 @@
    ===================================================================== */
 const CONFIG = {
   // URL ของ Google Apps Script Web App (ลงท้ายด้วย /exec) ถ้ายังว่างไว้ ระบบจะทำงานแบบ "ทดลอง" เก็บข้อมูลในเครื่อง
-  API_URL: '',
+  API_URL: 'https://script.google.com/macros/s/AKfycbxlw0Cz_RXAmigsE4iioUFB3tc7AGKBM2ZPOtf3fE3rGwj7Qbv0qNe61Jw38KuXsuGX/exec',
   STATION_NAME: 'ตันหยงมัส',
   STATION_CODE: '4419',
   STATION_PHONE: '082-343-9265',            // เช่น '073-xxx-xxx' จะแสดงในหน้าลูกค้า
-  STATION_HOURS: 'เปิดรับฝากทุกวัน 06:300–16:00 น.',            // เช่น 'เปิดรับฝากทุกวัน 07:00–16:00 น.'
+  STATION_HOURS: 'เปิดรับฝากทุกวัน 06:30–16:00 น.',            // เช่น 'เปิดรับฝากทุกวัน 07:00–16:00 น.'
   DEMO_PIN: '4419'              // PIN ของโหมดทดลองเท่านั้น (ระบบจริงใช้ PIN ที่ตั้งใน Apps Script)
 };
 
