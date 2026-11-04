@@ -6,11 +6,12 @@
  *   2. แก้ค่า STAFF_PIN_DEFAULT ด้านล่าง แล้วกดรันฟังก์ชัน setup() หนึ่งครั้ง (อนุญาตสิทธิ์)
  *   3. ทำให้ใช้งานได้ > การทำให้ใช้งานได้รายการใหม่ > เว็บแอป
  *        - เรียกใช้ในฐานะ: ฉัน   - ผู้ที่มีสิทธิ์เข้าถึง: ทุกคน
- *   4. คัดลอก URL ที่ลงท้ายด้วย /exec ไปใส่ในหน้า "ตั้งค่า" ของหน้าเจ้าหน้าที่ (หรือในตัวแปร API_URL ใน index.html)
+ *   4. คัดลอก URL ที่ลงท้ายด้วย /exec ไปใส่ในตัวแปร API_URL ใน common.js
  *
  * ความปลอดภัย:
- *   - ลูกค้า (GET action=track) จะเห็นเฉพาะสถานะ ปลายทาง และชื่อ/เบอร์ที่ถูกปิดบังบางส่วนเท่านั้น
- *     ไม่มีที่อยู่ ไม่มีเบอร์โทรเต็ม
+ *   - ลูกค้าเข้าระบบด้วย เลขที่พัสดุ (username) + เบอร์โทรผู้ส่งหรือผู้รับ (password) ผ่าน POST action=track
+ *     จะเห็นเฉพาะพัสดุที่ตรงทั้งสองอย่าง ไม่มีที่อยู่ และเบอร์โทรถูกปิดบังบางส่วน
+ *   - ใส่รหัสผิดเกิน MAX_FAILS ครั้ง เลขที่พัสดุนั้นจะถูกล็อก LOCK_MINUTES นาที
  *   - งานของเจ้าหน้าที่ทุกอย่าง (ดูรายการ/เพิ่ม/แก้/ลบ) ต้องส่ง PIN ที่ถูกต้องมาด้วย ตรวจที่ฝั่ง server
  */
 
@@ -20,7 +21,8 @@ const COLS = ['id', 'sendDate', 'issuedAt', 'train', 'loadDate', 'originCode', '
   'destCode', 'destName', 'senderName', 'senderPhone', 'senderAddr', 'receiverName',
   'receiverPhone', 'receiverAddr', 'items', 'weight', 'fee', 'eta', 'status', 'events', 'updatedAt'];
 const JSON_COLS = { items: true, events: true };
-const STATUS_ORDER = { received: 1, loaded: 2, arrived: 3, delivered: 4, problem: 0 };
+const MAX_FAILS = 8;
+const LOCK_MINUTES = 15;
 
 function setup() {
   const props = PropertiesService.getScriptProperties();
@@ -33,7 +35,6 @@ function setup() {
 function doGet(e) {
   const p = (e && e.parameter) || {};
   try {
-    if (p.action === 'track') return json_({ ok: true, results: track_(p.q || '') });
     if (p.action === 'ping') return json_({ ok: true });
     return json_({ ok: false, error: 'unknown action' });
   } catch (err) {
@@ -44,6 +45,9 @@ function doGet(e) {
 function doPost(e) {
   let body = {};
   try { body = JSON.parse(e.postData.contents || '{}'); } catch (err) { return json_({ ok: false, error: 'bad json' }); }
+  if (body.action === 'track') {          // ลูกค้า: ไม่ต้องใช้ PIN
+    try { return json_(track_(body.id, body.phone)); } catch (err) { return json_({ ok: false, error: String(err) }); }
+  }
   const pin = PropertiesService.getScriptProperties().getProperty('STAFF_PIN') || STAFF_PIN_DEFAULT;
   if (String(body.pin || '') !== String(pin)) {
     Utilities.sleep(800); // ชะลอการเดา PIN
@@ -66,44 +70,43 @@ function doPost(e) {
   }
 }
 
-/* ---------------- ค้นหาสำหรับลูกค้า (ข้อมูลถูกปิดบังบางส่วน) ---------------- */
+/* ---------------- ลูกค้าเข้าระบบ: เลขที่พัสดุ + เบอร์โทร ---------------- */
 
-function track_(q) {
-  q = String(q).trim().toUpperCase().replace(/\s+/g, '');
-  if (!q) return [];
-  const all = readAll_();
-  let hits = [];
-  if (/^PAN[\d-]+$/.test(q) || /^\d{4}-\d{5}$/.test(q) || /^\d{5}$/.test(q)) {
-    // ค้นด้วยเลขที่ใบส่งของ (เต็ม หรือ 5 หลักท้าย/รหัสสถานี-เลขท้าย)
-    hits = all.filter(function (r) { return r.id === q || r.id.slice(-q.length) === q; });
-  } else {
-    const phone = q.replace(/\D/g, '');
-    if (phone.length !== 10) return []; // ต้องใส่เบอร์ครบ 10 หลัก
-    hits = all.filter(function (r) { return r.senderPhone === phone || r.receiverPhone === phone; });
+function track_(id, phone) {
+  id = String(id || '').trim().toUpperCase().replace(/\s+/g, '');
+  phone = String(phone || '').replace(/\D/g, '');
+  if (!id || phone.length < 9) return { ok: false, error: 'กรุณาใส่เลขที่ใบส่งของและเบอร์โทรศัพท์' };
+  const cache = CacheService.getScriptCache();
+  const failKey = 'fail_' + id.slice(-11);
+  const fails = Number(cache.get(failKey) || 0);
+  if (fails >= MAX_FAILS) return { ok: false, error: 'ใส่รหัสผ่านผิดหลายครั้ง กรุณารอ ' + LOCK_MINUTES + ' นาทีแล้วลองใหม่' };
+
+  const short = /^(\d{4}-)?\d{5}$/.test(id);   // พิมพ์แค่ท้ายเลข เช่น 00057 หรือ 4419-00057
+  const hits = readAll_().filter(function (r) {
+    const idOk = r.id === id || (short && r.id.slice(-(id.length + 1)) === '-' + id);
+    return idOk && (r.senderPhone === phone || r.receiverPhone === phone);
+  });
+  if (!hits.length) {
+    cache.put(failKey, String(fails + 1), LOCK_MINUTES * 60);
+    Utilities.sleep(1000);
+    return { ok: true, results: [] };
   }
+  cache.remove(failKey);
   hits.sort(function (a, b) { return String(b.issuedAt || b.sendDate).localeCompare(String(a.issuedAt || a.sendDate)); });
-  return hits.slice(0, 30).map(publicView_);
+  return { ok: true, results: hits.slice(0, 10).map(ownerView_) };
 }
 
-function publicView_(r) {
+// ผู้ที่เข้าระบบได้เป็นผู้ส่ง/ผู้รับของพัสดุนั้น: แสดงชื่อเต็ม แต่ปิดบังเบอร์ และไม่ส่งที่อยู่ออกไป
+function ownerView_(r) {
   return {
     id: r.id, sendDate: r.sendDate, issuedAt: r.issuedAt, train: r.train, loadDate: r.loadDate,
     originName: r.originName || 'ตันหยงมัส', destCode: r.destCode, destName: r.destName,
-    senderName: maskName_(r.senderName), receiverName: maskName_(r.receiverName),
-    receiverPhone: maskPhone_(r.receiverPhone),
+    senderName: r.senderName, senderPhone: maskPhone_(r.senderPhone),
+    receiverName: r.receiverName, receiverPhone: maskPhone_(r.receiverPhone),
     items: (r.items || []).map(function (i) { return { qty: i.qty, unit: i.unit, desc: i.desc }; }),
-    weight: r.weight, eta: r.eta, status: r.status,
+    weight: r.weight, fee: r.fee, eta: r.eta, status: r.status,
     events: (r.events || []).map(function (ev) { return { s: ev.s, t: ev.t, note: ev.note || '' }; })
   };
-}
-
-function maskName_(name) {
-  name = String(name || '').replace(/^(นาย|นางสาว|นาง|น\.ส\.|ด\.ช\.|ด\.ญ\.)\s*/, '').trim();
-  if (!name) return '';
-  return name.split(/\s+/).map(function (w) {
-    const chars = Array.from(w);
-    return chars.slice(0, Math.min(2, chars.length)).join('') + '***';
-  }).join(' ');
 }
 
 function maskPhone_(p) {
