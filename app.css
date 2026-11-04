@@ -112,7 +112,7 @@ footer{color:var(--ink-soft);font-size:12.5px;text-align:center;padding:10px 16p
 .field label{font-size:13px;color:var(--ink-soft);font-weight:600}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:0 12px}
 @media (max-width:560px){.grid2{grid-template-columns:1fr}.tbl .hide-sm{display:none}}
-.drop{border:2px dashed var(--line);border-radius:14px;padding:26px 16px;text-align:center;cursor:pointer;background:var(--card)}
+.drop{display:block;border:2px dashed var(--line);border-radius:14px;padding:26px 16px;text-align:center;cursor:pointer;background:var(--card)}
 .drop.over{border-color:var(--brand-2);background:var(--info-bg)}
 .chg-new{color:var(--ok);font-weight:600}.chg-upd{color:var(--warn);font-weight:600}
 .modal-bg{position:fixed;inset:0;background:rgba(10,15,25,.5);display:flex;align-items:flex-start;justify-content:center;padding:24px 12px;overflow:auto;z-index:50}
@@ -133,3 +133,5 @@ footer{color:var(--ink-soft);font-size:12.5px;text-align:center;padding:10px 16p
 .qp{display:flex;flex-wrap:wrap;gap:6px;align-items:center;background:var(--bad-bg);border-radius:9px;padding:8px}
 .qp-warn{flex:1 1 100%;color:var(--bad);font-size:13px}
 .qp input{flex:1 1 130px;min-width:0;border:1.5px solid var(--line);background:var(--card);border-radius:8px;padding:6px 9px;font-size:15px}
+.li-tbl td{padding:5px 4px}
+.li-tbl input:not([type]),.li-tbl input[data-k]:not([type=checkbox]),.li-tbl select{border:1.5px solid var(--line);background:var(--card);border-radius:7px;padding:5px 7px;font-size:14px}
