@@ -4,6 +4,8 @@
  * วิธีติดตั้ง (ทำครั้งเดียว) ดูรายละเอียดใน README.md
  *   1. สร้าง Google Sheet ใหม่ > ส่วนขยาย > Apps Script > วางโค้ดไฟล์นี้ทั้งหมด
  *   2. แก้ค่า STAFF_PIN_DEFAULT ด้านล่าง แล้วกดรันฟังก์ชัน setup() หนึ่งครั้ง (อนุญาตสิทธิ์)
+ *      ต้องการเปลี่ยน PIN ภายหลัง: แก้ STAFF_PIN_DEFAULT แล้วรัน setup() อีกครั้ง (ไม่ต้อง Deploy ใหม่)
+ *      หรือแก้ค่า STAFF_PIN ที่ Project Settings (รูปเฟือง) > Script Properties ก็ได้
  *   3. ทำให้ใช้งานได้ > การทำให้ใช้งานได้รายการใหม่ > เว็บแอป
  *        - เรียกใช้ในฐานะ: ฉัน   - ผู้ที่มีสิทธิ์เข้าถึง: ทุกคน
  *   4. คัดลอก URL ที่ลงท้ายด้วย /exec ไปใส่ในตัวแปร API_URL ใน common.js
@@ -15,7 +17,7 @@
  *   - งานของเจ้าหน้าที่ทุกอย่าง (ดูรายการ/เพิ่ม/แก้/ลบ) ต้องส่ง PIN ที่ถูกต้องมาด้วย ตรวจที่ฝั่ง server
  */
 
-const STAFF_PIN_DEFAULT = '4419';      // <-- เปลี่ยนก่อนรัน setup()  (หลังจากนั้นเปลี่ยนได้ที่ Project Settings > Script Properties)
+const STAFF_PIN_DEFAULT = '4419';      // <-- เปลี่ยนแล้วกดรัน setup() เพื่อใช้ PIN ใหม่
 const SHEET_NAME = 'Parcels';
 const COLS = ['id', 'sendDate', 'issuedAt', 'train', 'loadDate', 'originCode', 'originName',
   'destCode', 'destName', 'senderName', 'senderPhone', 'senderAddr', 'receiverName',
@@ -24,10 +26,22 @@ const JSON_COLS = { items: true, events: true };
 const MAX_FAILS = 8;
 const LOCK_MINUTES = 15;
 
+// รันทุกครั้งที่เปลี่ยน STAFF_PIN_DEFAULT: บันทึก PIN ใหม่ทับของเดิม และสร้างชีตถ้ายังไม่มี
 function setup() {
-  const props = PropertiesService.getScriptProperties();
-  if (!props.getProperty('STAFF_PIN')) props.setProperty('STAFF_PIN', STAFF_PIN_DEFAULT);
+  const pin = String(STAFF_PIN_DEFAULT).trim();
+  if (!pin) throw new Error('STAFF_PIN_DEFAULT ว่างไม่ได้');
+  PropertiesService.getScriptProperties().setProperty('STAFF_PIN', pin);
   sheet_();
+  Logger.log('ตั้ง PIN เจ้าหน้าที่เป็น "' + pin + '" แล้ว (มีผลทันที ไม่ต้อง Deploy ใหม่)');
+}
+
+// ดูว่าตอนนี้ระบบใช้ PIN อะไรอยู่ (กดรันแล้วดูใน "บันทึกการดำเนินการ")
+function showPin() {
+  Logger.log('PIN ที่ใช้อยู่: "' + currentPin_() + '"');
+}
+
+function currentPin_() {
+  return String(PropertiesService.getScriptProperties().getProperty('STAFF_PIN') || STAFF_PIN_DEFAULT).trim();
 }
 
 /* ---------------- HTTP ---------------- */
@@ -48,8 +62,7 @@ function doPost(e) {
   if (body.action === 'track') {          // ลูกค้า: ไม่ต้องใช้ PIN
     try { return json_(track_(body.id, body.phone)); } catch (err) { return json_({ ok: false, error: String(err) }); }
   }
-  const pin = PropertiesService.getScriptProperties().getProperty('STAFF_PIN') || STAFF_PIN_DEFAULT;
-  if (String(body.pin || '') !== String(pin)) {
+  if (String(body.pin || '').trim() !== currentPin_()) {
     Utilities.sleep(800); // ชะลอการเดา PIN
     return json_({ ok: false, error: 'PIN ไม่ถูกต้อง' });
   }

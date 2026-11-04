@@ -50,8 +50,14 @@
    (หรือใส่ในหน้า staff.html > ตั้งค่า เพื่อทดสอบเฉพาะเครื่อง)
 6. ใส่เบอร์โทรและเวลาทำการของสถานีใน `CONFIG.STATION_PHONE` / `CONFIG.STATION_HOURS` (ใน `common.js`)
 
-> แก้ `Code.gs` ภายหลังแล้ว ต้องทำ **การทำให้ใช้งานได้ > จัดการ > แก้ไข > เวอร์ชันใหม่** ทุกครั้ง
-> เปลี่ยน PIN ได้ที่ Project Settings > Script Properties > `STAFF_PIN`
+> แก้โค้ดใน `Code.gs` ภายหลัง ต้องทำ **การทำให้ใช้งานได้ > จัดการ > แก้ไข > เวอร์ชันใหม่** ทุกครั้ง
+
+### เปลี่ยน PIN เจ้าหน้าที่
+- แก้ `STAFF_PIN_DEFAULT` ใน Apps Script แล้วกด **บันทึก** → เลือกฟังก์ชัน `setup` → **เรียกใช้** มีผลทันที ไม่ต้อง Deploy ใหม่
+- หรือแก้ค่า `STAFF_PIN` ที่ Project Settings (รูปเฟือง) > Script Properties
+- ลืม PIN: เลือกฟังก์ชัน `showPin` → เรียกใช้ → ดูใน "บันทึกการดำเนินการ"
+- **ถ้ายังไม่ได้ใส่ Web App URL ระบบจะอยู่ในโหมดทดลอง ใช้ PIN `4419` (`CONFIG.DEMO_PIN` ใน `common.js`) เท่านั้น** PIN ใน Apps Script ยังไม่มีผล
+  หน้าเข้าระบบของ `staff.html` จะบอกว่าตอนนี้อยู่โหมดไหน และมีเมนู “ตั้งค่าการเชื่อมต่อ” ให้ใส่/แก้ URL ได้โดยไม่ต้องเข้าระบบก่อน
 
 ### 3. เปิดให้ลูกค้าใช้ผ่าน GitHub Pages
 GitHub repo > **Settings > Pages** > Source: *Deploy from a branch* > เลือก branch `main` / root

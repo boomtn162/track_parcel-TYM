@@ -69,14 +69,18 @@ const isDemo = () => !apiUrl();
 
 const Session = { pin: '' };   // PIN เจ้าหน้าที่ (หน้า staff.html)
 
+const CONN_ERR = 'เชื่อมต่อ Google Apps Script ไม่ได้ — ตรวจว่า URL ถูกต้อง (ลงท้าย /exec) และตอน Deploy เลือก "ผู้ที่มีสิทธิ์เข้าถึง: ทุกคน"';
+
 const Cloud = {
   async get(params) {
     const u = new URL(apiUrl()); Object.entries(params).forEach(([k, v]) => u.searchParams.set(k, v));
     const r = await fetch(u.toString()); return r.json();
   },
   async post(body) {
-    const r = await fetch(apiUrl(), { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ ...body, pin: Session.pin }) });
-    return r.json();
+    let r;
+    try { r = await fetch(apiUrl(), { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ ...body, pin: Session.pin }) }); }
+    catch (e) { throw new Error(CONN_ERR); }
+    try { return await r.json(); } catch (e) { throw new Error(CONN_ERR); }
   },
   // ลูกค้าเข้าระบบ: เลขพัสดุ + เบอร์โทร (ไม่ต้องใช้ PIN)
   async track(id, phone) {
