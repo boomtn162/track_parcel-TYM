@@ -4,7 +4,7 @@
  *   2) รูปภาพหน้าจอ (OCR ด้วย tesseract.js ในเบราว์เซอร์ ไม่ส่งรูปไปที่ไหน) -> ocrListImage()
  *
  * ผลลัพธ์: [{ id, sendDate, fee, status, senderName, senderPhone, receiverName, receiverPhone, warn: [] }]
- * ไม่เก็บเลขบัตรประชาชน 13 หลักที่อยู่ใต้ชื่อในตาราง
+ * เลขบัตรประชาชน 13 หลักใต้ชื่อ: อ่านเฉพาะจาก "ข้อความที่คัดลอก" (OCR ไม่แม่นพอ) และส่งให้ server แฮชเก็บ ไม่เก็บเลขจริง
  */
 (function (root) {
   const TESS_VER = '5.1.1';
@@ -38,11 +38,18 @@
   }
 
   // แยกชื่อ/เบอร์ ของผู้ส่งและผู้รับ จากข้อความหลังยอดเงิน: [ชื่อผู้ส่ง] เบอร์1 [ชื่อผู้รับ] เบอร์2
-  function splitPeople(rest) {
+  const ID13_RE = /(?<!\d)\d{13}(?!\d)/g;
+  const idIn = (seg) => (String(seg || '').match(ID13_RE) || []).find((d) => validId(d)) || '';
+  function validId(d) { let s = 0; for (let i = 0; i < 12; i++) s += +d[i] * (13 - i); return (11 - (s % 11)) % 10 === +d[12]; }
+
+  function splitPeople(rest, withIds) {
     const phones = []; let m; PHONE_RE.lastIndex = 0;
     while ((m = PHONE_RE.exec(rest))) phones.push({ v: m[0], i: m.index, e: m.index + m[0].length });
     const p1 = phones[0], p2 = phones[1];
+    const segS = p1 ? rest.slice(0, p1.i) : rest, segR = p1 ? rest.slice(p1.e, p2 ? p2.i : undefined) : '';
+    const ids = withIds ? { senderIdNo: idIn(segS), receiverIdNo: idIn(segR) } : {};
     return {
+      ...ids,
       senderName: cleanName(p1 ? rest.slice(0, p1.i) : rest),
       senderPhone: p1 ? p1.v : '',
       receiverName: p1 ? cleanName(rest.slice(p1.e, p2 ? p2.i : undefined)) : '',
@@ -73,7 +80,7 @@
       const rest = am ? block.slice(am.index + am[0].length) : block;
       rows.push(check({
         id: h.id, sendDate: dm ? thaiDate(dm[0]) : '', fee: am ? parseFloat(am[0].replace(/,/g, '')) : 0,
-        status: statusFromText(block), ...splitPeople(rest)
+        status: statusFromText(block), ...splitPeople(rest, true)
       }));
     });
     return dedupe(rows);
