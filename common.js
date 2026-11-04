@@ -4,11 +4,11 @@
    ===================================================================== */
 const CONFIG = {
   // URL ของ Google Apps Script Web App (ลงท้ายด้วย /exec) ถ้ายังว่างไว้ ระบบจะทำงานแบบ "ทดลอง" เก็บข้อมูลในเครื่อง
-  API_URL: '',
+  API_URL: 'https://script.google.com/macros/s/AKfycbxlw0Cz_RXAmigsE4iioUFB3tc7AGKBM2ZPOtf3fE3rGwj7Qbv0qNe61Jw38KuXsuGX/exec',
   STATION_NAME: 'ตันหยงมัส',
   STATION_CODE: '4419',
-  STATION_PHONE: '',            // เช่น '073-xxx-xxx' จะแสดงในหน้าลูกค้า
-  STATION_HOURS: '',            // เช่น 'เปิดรับฝากทุกวัน 07:00–16:00 น.'
+  STATION_PHONE: '082-343-9265',            // เช่น '073-xxx-xxx' จะแสดงในหน้าลูกค้า
+  STATION_HOURS: 'เปิดรับฝากทุกวัน 06:30–16:00 น.',            // เช่น 'เปิดรับฝากทุกวัน 07:00–16:00 น.'
   DEMO_PIN: '4419'              // PIN ของโหมดทดลองเท่านั้น (ระบบจริงใช้ PIN ที่ตั้งใน Apps Script)
 };
 
@@ -69,14 +69,18 @@ const isDemo = () => !apiUrl();
 
 const Session = { pin: '' };   // PIN เจ้าหน้าที่ (หน้า staff.html)
 
+const CONN_ERR = 'เชื่อมต่อ Google Apps Script ไม่ได้ — ตรวจว่า URL ถูกต้อง (ลงท้าย /exec) และตอน Deploy เลือก "ผู้ที่มีสิทธิ์เข้าถึง: ทุกคน"';
+
 const Cloud = {
   async get(params) {
     const u = new URL(apiUrl()); Object.entries(params).forEach(([k, v]) => u.searchParams.set(k, v));
     const r = await fetch(u.toString()); return r.json();
   },
   async post(body) {
-    const r = await fetch(apiUrl(), { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ ...body, pin: Session.pin }) });
-    return r.json();
+    let r;
+    try { r = await fetch(apiUrl(), { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ ...body, pin: Session.pin }) }); }
+    catch (e) { throw new Error(CONN_ERR); }
+    try { return await r.json(); } catch (e) { throw new Error(CONN_ERR); }
   },
   // ลูกค้าเข้าระบบ: เลขพัสดุ + เบอร์โทร (ไม่ต้องใช้ PIN)
   async track(id, phone) {

@@ -23,7 +23,7 @@
 /* =====================================================================
    หน้าเจ้าหน้าที่
    ===================================================================== */
-const Staff = { parcels: [], tab: 'list', filter: { q: '', status: '', date: '', train: '' }, sel: new Set(), importPreview: null, busy: false };
+const Staff = { loginError: '', parcels: [], tab: 'list', filter: { q: '', status: '', date: '', train: '' }, sel: new Set(), importPreview: null, busy: false };
 
 function staffHeader() {
   return header(`ระบบเจ้าหน้าที่${isDemo() ? ' · <b style="color:#ffd08a">โหมดทดลอง</b>' : ''}`, '<a class="staff-link" href="index.html" target="_blank">หน้าลูกค้า ↗</a>');
@@ -32,16 +32,34 @@ function staffHeader() {
 function renderStaff() {
   document.body.classList.add('wide');
   if (!Session.pin) {
-    $('#app').innerHTML = `${staffHeader()}<main class="wrap"><section class="card search" style="max-width:420px;margin-left:auto;margin-right:auto">
+    const url = apiUrl();
+    const fromConfig = !!CONFIG.API_URL && !store('tym_api_url');
+    $('#app').innerHTML = `${staffHeader()}<main class="wrap"><section class="card search" style="max-width:460px;margin-left:auto;margin-right:auto">
       <label for="pin">รหัส PIN เจ้าหน้าที่</label>
-      <form id="lf"><input id="pin" type="password" inputmode="numeric" autocomplete="current-password"><button class="btn">เข้าสู่ระบบ</button></form>
-      ${isDemo() ? `<p class="hint">โหมดทดลอง PIN คือ ${esc(CONFIG.DEMO_PIN)}</p>` : ''}
+      <form id="lf"><input id="pin" type="password" inputmode="numeric" autocomplete="current-password"><button class="btn" ${Staff.busy ? 'disabled' : ''}>${Staff.busy ? 'กำลังตรวจสอบ…' : 'เข้าสู่ระบบ'}</button></form>
+      ${Staff.loginError ? `<div class="demo-note" style="background:var(--bad-bg);color:var(--bad)">${esc(Staff.loginError)}</div>` : ''}
+      ${isDemo()
+        ? `<p class="hint"><b>โหมดทดลอง</b> (ยังไม่ได้เชื่อม Google Sheets) — PIN คือ <b>${esc(CONFIG.DEMO_PIN)}</b><br>PIN ที่ตั้งใน Apps Script จะใช้ได้หลังใส่ Web App URL ด้านล่าง หรือใน <code>CONFIG.API_URL</code> ของ common.js</p>`
+        : `<p class="hint"><b>เชื่อมต่อ Google Sheets</b>: <span style="overflow-wrap:anywhere">${esc(url.replace(/^https:\/\//, '').slice(0, 60))}…</span><br>PIN คือค่า <b>STAFF_PIN</b> ใน Apps Script (เปลี่ยนได้โดยแก้ STAFF_PIN_DEFAULT แล้วรัน <code>setup</code> หรือดูค่าปัจจุบันด้วยการรัน <code>showPin</code>)</p>`}
+      <details style="margin-top:10px" ${Staff.loginError && !/PIN/.test(Staff.loginError) ? 'open' : ''}><summary class="hint" style="cursor:pointer">ตั้งค่าการเชื่อมต่อ (เครื่องนี้)</summary>
+        <div class="field" style="margin-top:8px"><label>Web App URL</label><input id="au" value="${esc(store('tym_api_url') || '')}" placeholder="${esc(CONFIG.API_URL || 'https://script.google.com/macros/s/.../exec')}"></div>
+        <p class="hint" style="margin-top:-4px">${fromConfig ? 'ตอนนี้ใช้ URL จาก CONFIG.API_URL ใน common.js · ใส่ URL ที่นี่เพื่อใช้แทนเฉพาะเครื่องนี้' : 'เว้นว่างแล้วกดบันทึก = ' + (CONFIG.API_URL ? 'กลับไปใช้ URL ใน common.js' : 'กลับไปโหมดทดลอง')}</p>
+        <button class="btn ghost sm" id="asv2" type="button">บันทึกการเชื่อมต่อ</button>
+      </details>
     </section></main>`;
     $('#pin').focus();
     $('#lf').onsubmit = async (e) => {
       e.preventDefault();
-      try { await API().login($('#pin').value.trim()); sessionStorage.setItem('tym_pin', Session.pin); await reload(); }
-      catch (err) { Session.pin = ''; toast(err.message || 'เข้าสู่ระบบไม่สำเร็จ'); }
+      const pin = $('#pin').value.trim();
+      if (!pin) return;
+      Staff.busy = true; Staff.loginError = ''; renderStaff();
+      try { await API().login(pin); sessionStorage.setItem('tym_pin', Session.pin); Staff.busy = false; await reload(); }
+      catch (err) { Session.pin = ''; Staff.busy = false; Staff.loginError = err.message || 'เข้าสู่ระบบไม่สำเร็จ'; renderStaff(); }
+    };
+    $('#asv2').onclick = () => {
+      const u = $('#au').value.trim();
+      if (u && !/^https:\/\/script\.google\.com\/.+\/exec$/.test(u)) { Staff.loginError = 'URL ต้องขึ้นต้นด้วย https://script.google.com และลงท้ายด้วย /exec'; renderStaff(); return; }
+      store('tym_api_url', u); Staff.loginError = ''; toast('บันทึกการเชื่อมต่อแล้ว'); renderStaff();
     };
     return;
   }
@@ -55,7 +73,7 @@ function renderStaff() {
 
 async function reload() {
   try { Staff.parcels = await API().list(); }
-  catch (e) { toast('โหลดข้อมูลไม่สำเร็จ: ' + e.message); if (/PIN/.test(e.message)) { Session.pin = ''; sessionStorage.removeItem('tym_pin'); } }
+  catch (e) { if (/PIN|เชื่อมต่อ/.test(e.message)) { Session.pin = ''; sessionStorage.removeItem('tym_pin'); Staff.loginError = e.message; } else toast('โหลดข้อมูลไม่สำเร็จ: ' + e.message); }
   renderStaff();
 }
 
