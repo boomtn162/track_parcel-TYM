@@ -157,6 +157,8 @@ function rowToObj_(row) {
     if (JSON_COLS[c]) { try { v = v ? JSON.parse(v) : []; } catch (e) { v = []; } }
     else if (c === 'weight' || c === 'fee') v = Number(v) || 0;
     else v = String(v == null ? '' : v);
+    // Google Sheets อาจแปลงเบอร์เป็นตัวเลขแล้วตัด 0 ข้างหน้าทิ้ง (เช่น 924023836) -> เติม 0 กลับ
+    if ((c === 'senderPhone' || c === 'receiverPhone') && v) { v = v.replace(/\D/g, ''); if (/^[1-9]\d{7,8}$/.test(v)) v = '0' + v; }
     o[c] = v;
   });
   return o;
@@ -184,10 +186,14 @@ function upsert_(parcels) {
     p.id = String(p.id).trim().toUpperCase();
     p.updatedAt = now;
     const row = objToRow_(p);
-    if (index[p.id]) sh.getRange(index[p.id], 1, 1, COLS.length).setValues([row]);
+    if (index[p.id]) sh.getRange(index[p.id], 1, 1, COLS.length).setNumberFormat('@').setValues([row]);
     else { append.push(row); index[p.id] = -1; }
   });
-  if (append.length) sh.getRange(sh.getLastRow() + 1, 1, append.length, COLS.length).setValues(append);
+  if (append.length) {
+    const rng = sh.getRange(sh.getLastRow() + 1, 1, append.length, COLS.length);
+    rng.setNumberFormat('@');   // เก็บเป็นข้อความ ไม่ให้ Sheets ตัด 0 หน้าเบอร์โทร
+    rng.setValues(append);
+  }
   return parcels.length;
 }
 

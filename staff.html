@@ -23,7 +23,7 @@
 /* =====================================================================
    หน้าเจ้าหน้าที่
    ===================================================================== */
-const Staff = { loginError: '', parcels: [], tab: 'list', filter: { q: '', status: '', date: '', train: '' }, sel: new Set(), importPreview: null, busy: false };
+const Staff = { loginError: '', parcels: [], tab: 'list', filter: { q: '', status: '', date: '', train: '', nophone: false }, sel: new Set(), importPreview: null, busy: false };
 
 function staffHeader() {
   return header(`ระบบเจ้าหน้าที่${isDemo() ? ' · <b style="color:#ffd08a">โหมดทดลอง</b>' : ''}`, '<a class="staff-link" href="index.html" target="_blank">หน้าลูกค้า ↗</a>');
@@ -96,12 +96,15 @@ function setStatus(p, status, note, t) {
   return q;
 }
 
+const noPhone = (p) => !p.senderPhone && !p.receiverPhone;
+
 function filtered() {
   const f = Staff.filter, q = f.q.trim().toLowerCase();
   return Staff.parcels.filter((p) => {
     if (f.status && p.status !== f.status) return false;
     if (f.date && p.sendDate !== f.date) return false;
     if (f.train && String(p.train) !== f.train) return false;
+    if (f.nophone && !noPhone(p)) return false;
     if (q) {
       const hay = [p.id, p.senderName, p.receiverName, p.senderPhone, p.receiverPhone, p.destName, p.destCode, itemsText(p.items)].join(' ').toLowerCase();
       if (!hay.includes(q)) return false;
@@ -117,7 +120,8 @@ function paneList() {
   const trains = [...new Set(Staff.parcels.map((p) => p.train).filter(Boolean))].sort();
   const rows = filtered();
   $('#pane').innerHTML = `
-    <div class="stats">${['', ...STEPS, 'problem'].map((s) => `<button class="stat ${f.status === s ? 'on' : ''}" data-st="${s}"><b>${s ? count(s) : base.length}</b><span>${s ? STATUS[s].icon + ' ' + STATUS[s].label : 'ทั้งหมด'}</span></button>`).join('')}</div>
+    <div class="stats">${['', ...STEPS, 'problem'].map((s) => `<button class="stat ${f.status === s && !f.nophone ? 'on' : ''}" data-st="${s}"><b>${s ? count(s) : base.length}</b><span>${s ? STATUS[s].icon + ' ' + STATUS[s].label : 'ทั้งหมด'}</span></button>`).join('')}
+      <button class="stat ${f.nophone ? 'on' : ''}" id="np" style="${base.some(noPhone) ? 'border-color:var(--bad)' : ''}"><b style="${base.some(noPhone) ? 'color:var(--bad)' : ''}">${base.filter(noPhone).length}</b><span>📵 ยังไม่มีเบอร์</span></button></div>
     <div class="toolbar">
       <input type="search" id="fq" placeholder="ค้นหา เลขที่ ชื่อ เบอร์ ปลายทาง" value="${esc(f.q)}">
       <input type="date" id="fd" value="${esc(f.date)}" title="วันที่ฝากส่ง">
@@ -133,11 +137,13 @@ function paneList() {
         <td><input type="checkbox" data-sel="${esc(p.id)}" ${Staff.sel.has(p.id) ? 'checked' : ''}></td>
         <td class="mono"><a href="#" data-edit="${esc(p.id)}">${esc(p.id)}</a><div class="muted">${fmtDate(p.sendDate, false)}</div></td>
         <td>${esc(p.destName)}<div class="muted">${esc(p.destCode)}</div></td>
-        <td class="hide-sm">${esc(p.senderName || '-')} <span class="muted">${esc(p.senderPhone || '')}</span><div class="muted">→ ${esc(p.receiverName || '-')} ${esc(p.receiverPhone || '')}</div>${!p.senderPhone && !p.receiverPhone ? '<div class="muted" style="color:var(--bad)">⚠️ ยังไม่มีเบอร์ ลูกค้าเข้าระบบไม่ได้ — นำเข้าใบส่งของ</div>' : ''}</td>
+        <td class="hide-sm">${esc(p.senderName || '-')} <span class="muted">${esc(p.senderPhone || '')}</span><div class="muted">→ ${esc(p.receiverName || '-')} ${esc(p.receiverPhone || '')}</div></td>
         <td class="hide-sm">${esc(itemsText(p.items))}<div class="muted">${p.weight ? esc(p.weight) + ' กก.' : ''}</div></td>
         <td>${esc(p.train || '-')}</td>
         <td><span class="badge b-${esc(p.status)}">${STATUS[p.status] ? STATUS[p.status].label : esc(p.status)}</span></td>
-      </tr>`).join('') || `<tr><td colspan="7" class="empty">ไม่มีรายการ — นำเข้าไฟล์ PDF จากแท็บ “นำเข้า PDF”</td></tr>`}</tbody></table></div>
+      </tr>${noPhone(p) ? `<tr class="qp-row ${Staff.sel.has(p.id) ? 'sel' : ''}"><td></td><td colspan="6">
+          <form class="qp" data-qp="${esc(p.id)}"><span class="qp-warn">📵 ยังไม่มีเบอร์ ลูกค้าเข้าระบบไม่ได้ (ใบนำมอบไม่มีเบอร์ลูกค้า) — กรอกจากใบส่งของ หรือนำเข้า PDF ใบส่งของ</span>
+            <input name="sp" inputmode="tel" placeholder="โทรผู้ส่ง" maxlength="12"><input name="rp" inputmode="tel" placeholder="โทรผู้รับ" maxlength="12"><button class="btn sm">บันทึกเบอร์</button></form></td></tr>` : ''}`).join('') || `<tr><td colspan="7" class="empty">ไม่มีรายการ — นำเข้าไฟล์ PDF จากแท็บ “นำเข้า PDF”</td></tr>`}</tbody></table></div>
     <div class="bulk">
       <b>เลือก ${Staff.sel.size} รายการ</b>
       <button class="btn sm warn" data-bulk="loaded">🚆 ขึ้นขบวนแล้ว</button>
@@ -154,9 +160,20 @@ function paneList() {
   $('#fd').onchange = (e) => set('date', e.target.value);
   $('#ft').onchange = (e) => set('train', e.target.value);
   $('#today').onclick = () => set('date', todayISO());
-  $('#clr').onclick = () => { Staff.filter = { q: '', status: '', date: '', train: '' }; paneList(); };
+  $('#clr').onclick = () => { Staff.filter = { q: '', status: '', date: '', train: '', nophone: false }; paneList(); };
+  $('#np').onclick = () => { Staff.filter.nophone = !Staff.filter.nophone; Staff.filter.status = ''; paneList(); };
+  document.querySelectorAll('[data-qp]').forEach((fm) => (fm.onsubmit = async (e) => {
+    e.preventDefault();
+    const sp = normPhone(fm.sp.value), rp = normPhone(fm.rp.value);
+    if (!sp && !rp) { toast('กรอกเบอร์ผู้ส่งหรือผู้รับอย่างน้อย 1 เบอร์'); return; }
+    if ([sp, rp].some((x) => x && !/^0\d{8,9}$/.test(x))) { toast('เบอร์โทรต้องขึ้นต้นด้วย 0 และมี 9–10 หลัก'); return; }
+    const p = Staff.parcels.find((x) => x.id === fm.dataset.qp);
+    const q = JSON.parse(JSON.stringify(p)); if (sp) q.senderPhone = sp; if (rp) q.receiverPhone = rp;
+    fm.querySelector('button').disabled = true;
+    await save([q], `บันทึกเบอร์ ${q.id} แล้ว ลูกค้าเข้าระบบได้`); paneList();
+  }));
   $('#rl').onclick = reload;
-  document.querySelectorAll('[data-st]').forEach((b) => (b.onclick = () => set('status', b.dataset.st)));
+  document.querySelectorAll('[data-st]').forEach((b) => (b.onclick = () => { Staff.filter.nophone = false; set('status', b.dataset.st); }));
   $('#all').onchange = (e) => { rows.forEach((p) => (e.target.checked ? Staff.sel.add(p.id) : Staff.sel.delete(p.id))); paneList(); };
   document.querySelectorAll('[data-sel]').forEach((c) => (c.onchange = () => { c.checked ? Staff.sel.add(c.dataset.sel) : Staff.sel.delete(c.dataset.sel); paneList(); }));
   document.querySelectorAll('[data-edit]').forEach((a) => (a.onclick = (e) => { e.preventDefault(); openEdit(a.dataset.edit); }));
