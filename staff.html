@@ -18,12 +18,13 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script src="parser.js"></script>
+<script src="listimport.js"></script>
 <script src="common.js"></script>
 <script>
 /* =====================================================================
    หน้าเจ้าหน้าที่
    ===================================================================== */
-const Staff = { loginError: '', parcels: [], tab: 'list', filter: { q: '', status: '', date: '', train: '', nophone: false }, sel: new Set(), importPreview: null, busy: false };
+const Staff = { listPreview: null, loginError: '', parcels: [], tab: 'list', filter: { q: '', status: '', date: '', train: '', nophone: false }, sel: new Set(), importPreview: null, busy: false };
 
 function staffHeader() {
   return header(`ระบบเจ้าหน้าที่${isDemo() ? ' · <b style="color:#ffd08a">โหมดทดลอง</b>' : ''}`, '<a class="staff-link" href="index.html" target="_blank">หน้าลูกค้า ↗</a>');
@@ -63,7 +64,7 @@ function renderStaff() {
     };
     return;
   }
-  const tabs = [['list', 'รายการพัสดุ'], ['import', 'นำเข้า PDF'], ['add', 'เพิ่มเอง'], ['settings', 'ตั้งค่า']];
+  const tabs = [['list', 'รายการพัสดุ'], ['import', 'นำเข้า PDF / รูป'], ['add', 'เพิ่มเอง'], ['settings', 'ตั้งค่า']];
   $('#app').innerHTML = `${staffHeader()}<main class="wrap">
     <nav class="tabs">${tabs.map(([k, l]) => `<button data-tab="${k}" class="${Staff.tab === k ? 'on' : ''}">${l}</button>`).join('')}</nav>
     <div id="pane"></div></main>`;
@@ -373,7 +374,21 @@ function paneImport() {
       • <b>ใบนำมอบสินค้าห่อวัตถุ (รวม)</b> → เปลี่ยนทุกพัสดุในใบเป็น “ขึ้นขบวนรถแล้ว” ตามขบวนในใบ</p>
     <label class="drop" id="drop"><input type="file" id="files" accept="application/pdf" multiple hidden>
       <div style="font-size:30px">📄</div><b>แตะเพื่อเลือกไฟล์ PDF</b><div class="hint">หรือลากไฟล์มาวางที่นี่</div></label>
-    <div id="pv" style="margin-top:14px">${pv ? previewHtml(pv) : ''}</div></div>`;
+    <div id="pv" style="margin-top:14px">${pv ? previewHtml(pv) : ''}</div></div>
+  <div class="card" style="margin-top:14px">
+    <h2 style="margin-top:0">นำเข้าจากตารางรายการใบส่งของ (ข้อความ / รูปภาพ)</h2>
+    <p class="hint" style="margin-top:-6px">ได้เลขที่ ยอดเงิน สถานะ ชื่อ และเบอร์โทรผู้ส่ง/ผู้รับ ทีละหลายรายการ (ตารางนี้ไม่มีสถานีปลายทาง — นำเข้าใบนำมอบหรือใบส่งของเพื่อเติมทีหลัง)<br>
+      <b>วิธีที่ 1 (แม่นที่สุด):</b> ในหน้าเว็บระบบรถไฟ ลากคลุมตารางแล้วกด Ctrl+C มาวางในช่องนี้ (Ctrl+V)<br>
+      <b>วิธีที่ 2:</b> เลือกรูปภาพหน้าจอ หรือวางรูป (Ctrl+V) ในช่องนี้ ระบบจะอ่านด้วย OCR ในเครื่อง <u>ต้องตรวจทานก่อนบันทึก</u></p>
+    <textarea id="lt" rows="5" style="width:100%;border:1.5px solid var(--line);background:var(--bg);border-radius:10px;padding:10px;font:inherit;font-size:14px" placeholder="วางข้อความที่คัดลอกจากตาราง หรือวางรูปภาพหน้าจอที่นี่"></textarea>
+    <div class="row-end" style="justify-content:flex-start;margin-top:8px">
+      <button class="btn sm" id="ltgo">อ่านข้อความ</button>
+      <label class="btn ghost sm" style="cursor:pointer">🖼️ เลือกรูปภาพ<input type="file" id="limg" accept="image/*" hidden></label>
+      <span class="hint" id="lprog" style="margin:0"></span>
+    </div>
+    <div id="lpv" style="margin-top:12px">${Staff.listPreview ? listPreviewHtml(Staff.listPreview) : ''}</div>
+  </div>`;
+  bindListImport();
   const inp = $('#files'), drop = $('#drop');
   inp.onchange = () => handleFiles([...inp.files]);
   drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('over'); };
@@ -406,6 +421,97 @@ function bindPreview() {
   const x = $('#pvx'), ok = $('#pvok');
   if (x) x.onclick = () => { Staff.importPreview = null; paneImport(); };
   if (ok) ok.onclick = async () => { ok.disabled = true; await save(Staff.importPreview.changes.map((c) => c.p)); Staff.importPreview = null; Staff.tab = 'list'; renderStaff(); };
+}
+
+/* ---------------- นำเข้าจากตารางรายการ (ข้อความ / รูป) ---------------- */
+function bindListImport() {
+  const ta = $('#lt');
+  $('#ltgo').onclick = () => {
+    const rows = TYMList.parseListText(ta.value);
+    if (!rows.length) { toast('ไม่พบเลขที่ PAN… ในข้อความ ลองคัดลอกทั้งตารางอีกครั้ง หรือใช้รูปภาพ'); return; }
+    showListPreview(rows, 'ข้อความที่วาง');
+  };
+  $('#limg').onchange = (e) => { const f = e.target.files[0]; if (f) runOcr(f); };
+  ta.onpaste = (e) => {
+    const img = [...(e.clipboardData ? e.clipboardData.items : [])].find((it) => it.type.startsWith('image/'));
+    if (img) { e.preventDefault(); runOcr(img.getAsFile()); }
+  };
+  if (Staff.listPreview) bindListPreview();
+}
+
+async function runOcr(file) {
+  const prog = (t) => { const el = $('#lprog'); if (el) el.textContent = t; };
+  $('#ltgo').disabled = true;
+  try {
+    const rows = await TYMList.ocrListImage(file, { stationCode: CONFIG.STATION_CODE, onProgress: prog });
+    if (!rows.length) { toast('อ่านรูปไม่พบรายการ ลองใช้ภาพที่ชัดขึ้น หรือคัดลอกข้อความแทน', 4000); prog(''); }
+    else showListPreview(rows, 'รูปภาพ (OCR)');
+  } catch (e) { prog(''); toast(e.message, 4000); }
+  const b = $('#ltgo'); if (b) b.disabled = false;
+}
+
+function showListPreview(rows, source) {
+  Staff.listPreview = { source, rows: rows.map((r) => ({ ...r, use: true })) };
+  $('#lpv').innerHTML = listPreviewHtml(Staff.listPreview);
+  bindListPreview();
+  $('#lpv').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function listPreviewHtml(lp) {
+  const opt = (v, cur) => `<option value="${v}" ${v === cur ? 'selected' : ''}>${v ? STATUS[v].label : 'ไม่เปลี่ยน'}</option>`;
+  const cell = (i, k, v, w, bad) => `<input data-li="${i}" data-k="${k}" value="${esc(v)}" style="width:${w};${bad ? 'border-color:var(--bad);background:var(--bad-bg)' : ''}">`;
+  const nWarn = lp.rows.filter((r) => r.warn.length).length;
+  return `<p class="hint">อ่านจาก${esc(lp.source)} ได้ ${lp.rows.length} รายการ${nWarn ? ` · <b style="color:var(--bad)">${nWarn} รายการมีช่องสีแดงที่ต้องตรวจ</b>` : ''} · แก้ไขในตารางได้เลย${lp.source.includes('OCR') ? ' · <b>OCR อาจอ่านตัวเลข/ชื่อผิด กรุณาเทียบกับรูปทุกแถว</b>' : ''}</p>
+  <div class="tbl-wrap"><table class="tbl li-tbl"><thead><tr><th>✓</th><th>เลขที่</th><th>ยอดเงิน</th><th>สถานะ</th><th>ผู้ส่ง</th><th>โทรผู้ส่ง</th><th>ผู้รับ</th><th>โทรผู้รับ</th><th></th></tr></thead><tbody>
+  ${lp.rows.map((r, i) => {
+    const ex = Staff.parcels.find((p) => p.id === r.id);
+    return `<tr><td><input type="checkbox" data-li="${i}" data-k="use" ${r.use ? 'checked' : ''}></td>
+      <td>${cell(i, 'id', r.id, '170px', r.warn.includes('id'))}</td>
+      <td>${cell(i, 'fee', r.fee || '', '80px')}</td>
+      <td><select data-li="${i}" data-k="status">${['', 'received', 'loaded', 'arrived', 'delivered'].map((v) => opt(v, r.status)).join('')}</select></td>
+      <td>${cell(i, 'senderName', r.senderName, '150px')}</td>
+      <td>${cell(i, 'senderPhone', r.senderPhone, '110px', r.warn.includes('senderPhone'))}</td>
+      <td>${cell(i, 'receiverName', r.receiverName, '150px')}</td>
+      <td>${cell(i, 'receiverPhone', r.receiverPhone, '110px', r.warn.includes('receiverPhone'))}</td>
+      <td class="muted">${ex ? 'อัปเดต' : '<span class="chg-new">ใหม่</span>'}</td></tr>`;
+  }).join('')}</tbody></table></div>
+  <div class="row-end"><button class="btn ghost" id="lpx">ยกเลิก</button><button class="btn" id="lpok">บันทึกรายการที่เลือก</button></div>`;
+}
+
+function bindListPreview() {
+  document.querySelectorAll('[data-li]').forEach((el) => (el.onchange = () => {
+    const r = Staff.listPreview.rows[+el.dataset.li], k = el.dataset.k;
+    r[k] = k === 'use' ? el.checked : k === 'fee' ? +el.value || 0 : /Phone$/.test(k) ? normPhone(el.value) : k === 'id' ? normId(el.value) : el.value.trim();
+  }));
+  $('#lpx').onclick = () => { Staff.listPreview = null; $('#lpv').innerHTML = ''; };
+  $('#lpok').onclick = async () => {
+    const rows = Staff.listPreview.rows.filter((r) => r.use);
+    const bad = rows.filter((r) => !/^PAN\d{4}-\d{4}-\d{5}$/.test(r.id) || [r.senderPhone, r.receiverPhone].some((p) => p && !/^0\d{8,9}$/.test(p)));
+    if (bad.length) { toast(`แก้เลขที่/เบอร์ที่ไม่ถูกต้องก่อน: ${bad.map((r) => r.id).join(', ')}`, 4500); return; }
+    if (!rows.length) { toast('ไม่ได้เลือกรายการ'); return; }
+    $('#lpok').disabled = true;
+    await save(mergeList(rows), `บันทึกแล้ว ${rows.length} รายการ`);
+    Staff.listPreview = null; Staff.tab = 'list'; renderStaff();
+  };
+}
+
+// รวมข้อมูลจากตารางเข้ากับพัสดุเดิม: เติมชื่อ/เบอร์/ยอดเงิน และเลื่อนสถานะไปข้างหน้าเท่านั้น
+function mergeList(rows) {
+  return rows.map((r) => {
+    let p = Staff.parcels.find((x) => x.id === r.id);
+    p = p ? JSON.parse(JSON.stringify(p)) : null;
+    if (!p) {
+      p = { id: r.id, sendDate: r.sendDate || todayISO(), issuedAt: '', train: '', loadDate: '', originCode: CONFIG.STATION_CODE, originName: CONFIG.STATION_NAME,
+        destCode: '', destName: '', senderName: '', senderPhone: '', senderAddr: '', receiverName: '', receiverPhone: '', receiverAddr: '',
+        items: [], weight: 0, fee: 0, eta: '', status: 'received', events: [] };
+      p = setStatus(p, 'received', '', r.sendDate || nowLocalISO());
+    }
+    ['senderName', 'senderPhone', 'receiverName', 'receiverPhone'].forEach((k) => { if (r[k]) p[k] = r[k]; });
+    if (r.fee) p.fee = r.fee;
+    if (!p.sendDate && r.sendDate) p.sendDate = r.sendDate;
+    if (r.status && (RANK[r.status] || 0) > (RANK[p.status] || 0)) p = setStatus(p, r.status, r.status === 'arrived' && p.destName ? `ถึงสถานี${p.destName}` : '');
+    return p;
+  });
 }
 
 function paneSettings() {
