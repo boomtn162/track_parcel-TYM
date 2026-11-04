@@ -83,10 +83,6 @@ async function save(parcels, msg) {
   Staff.busy = true;
   try {
     await API().upsert(parcels);
-    parcels.forEach((p) => {
-      if (p.senderIdNo) p.hasSenderId = true; if (p.receiverIdNo) p.hasReceiverId = true;
-      delete p.senderIdNo; delete p.receiverIdNo;     // ไม่เก็บเลขบัตรจริงไว้ในหน้าเว็บ
-    });
     const idx = Object.fromEntries(Staff.parcels.map((p, i) => [p.id, i]));
     parcels.forEach((p) => { if (p.id in idx) Staff.parcels[idx[p.id]] = p; else Staff.parcels.push(p); });
     toast(msg || `บันทึกแล้ว ${parcels.length} รายการ`);
@@ -101,8 +97,7 @@ function setStatus(p, status, note, t) {
   return q;
 }
 
-// ลูกค้ายังเข้าระบบไม่ได้ ถ้าไม่มีทั้งเบอร์โทรและเลขบัตรประชาชน
-const noPhone = (p) => !p.senderPhone && !p.receiverPhone && !p.hasSenderId && !p.hasReceiverId;
+const noPhone = (p) => !p.senderPhone && !p.receiverPhone;
 
 function filtered() {
   const f = Staff.filter, q = f.q.trim().toLowerCase();
@@ -127,7 +122,7 @@ function paneList() {
   const rows = filtered();
   $('#pane').innerHTML = `
     <div class="stats">${['', ...STEPS, 'problem'].map((s) => `<button class="stat ${f.status === s && !f.nophone ? 'on' : ''}" data-st="${s}"><b>${s ? count(s) : base.length}</b><span>${s ? STATUS[s].icon + ' ' + STATUS[s].label : 'ทั้งหมด'}</span></button>`).join('')}
-      <button class="stat ${f.nophone ? 'on' : ''}" id="np" style="${base.some(noPhone) ? 'border-color:var(--bad)' : ''}"><b style="${base.some(noPhone) ? 'color:var(--bad)' : ''}">${base.filter(noPhone).length}</b><span>📵 ยังไม่มีเบอร์/เลขบัตร</span></button></div>
+      <button class="stat ${f.nophone ? 'on' : ''}" id="np" style="${base.some(noPhone) ? 'border-color:var(--bad)' : ''}"><b style="${base.some(noPhone) ? 'color:var(--bad)' : ''}">${base.filter(noPhone).length}</b><span>📵 ยังไม่มีเบอร์</span></button></div>
     <div class="toolbar">
       <input type="search" id="fq" placeholder="ค้นหา เลขที่ ชื่อ เบอร์ ปลายทาง" value="${esc(f.q)}">
       <input type="date" id="fd" value="${esc(f.date)}" title="วันที่ฝากส่ง">
@@ -143,12 +138,12 @@ function paneList() {
         <td><input type="checkbox" data-sel="${esc(p.id)}" ${Staff.sel.has(p.id) ? 'checked' : ''}></td>
         <td class="mono"><a href="#" data-edit="${esc(p.id)}">${esc(p.id)}</a><div class="muted">${fmtDate(p.sendDate, false)}</div></td>
         <td>${esc(p.destName)}<div class="muted">${esc(p.destCode)}</div></td>
-        <td class="hide-sm">${esc(p.senderName || '-')} <span class="muted">${esc(p.senderPhone || '')}</span>${p.hasSenderId ? ' <span title="มีเลขบัตรประชาชนผู้ส่ง (เก็บแบบเข้ารหัส)">🪪</span>' : ''}<div class="muted">→ ${esc(p.receiverName || '-')} ${esc(p.receiverPhone || '')}</div></td>
+        <td class="hide-sm">${esc(p.senderName || '-')} <span class="muted">${esc(p.senderPhone || '')}</span><div class="muted">→ ${esc(p.receiverName || '-')} ${esc(p.receiverPhone || '')}</div></td>
         <td class="hide-sm">${esc(itemsText(p.items))}<div class="muted">${p.weight ? esc(p.weight) + ' กก.' : ''}</div></td>
         <td>${esc(p.train || '-')}</td>
         <td><span class="badge b-${esc(p.status)}">${STATUS[p.status] ? STATUS[p.status].label : esc(p.status)}</span></td>
       </tr>${noPhone(p) ? `<tr class="qp-row ${Staff.sel.has(p.id) ? 'sel' : ''}"><td></td><td colspan="6">
-          <form class="qp" data-qp="${esc(p.id)}"><span class="qp-warn">📵 ยังไม่มีเบอร์/เลขบัตร ลูกค้าเข้าระบบไม่ได้ — กรอกเบอร์จากใบส่งของ หรือนำเข้า PDF ใบส่งของ / ไฟล์ Excel จาก FMIS</span>
+          <form class="qp" data-qp="${esc(p.id)}"><span class="qp-warn">📵 ยังไม่มีเบอร์ ลูกค้าเข้าระบบไม่ได้ (ใบนำมอบไม่มีเบอร์ลูกค้า) — กรอกจากใบส่งของ หรือนำเข้า PDF ใบส่งของ</span>
             <input name="sp" inputmode="tel" placeholder="โทรผู้ส่ง" maxlength="12"><input name="rp" inputmode="tel" placeholder="โทรผู้รับ" maxlength="12"><button class="btn sm">บันทึกเบอร์</button></form></td></tr>` : ''}`).join('') || `<tr><td colspan="7" class="empty">ไม่มีรายการ — นำเข้าไฟล์ PDF จากแท็บ “นำเข้า PDF”</td></tr>`}</tbody></table></div>
     <div class="bulk">
       <b>เลือก ${Staff.sel.size} รายการ</b>
@@ -367,22 +362,6 @@ function mergeImports(parsed) {
       byId[r.id] = p; touched[r.id] = true; notes[r.id] = notes[r.id] ? notes[r.id] + ' · ' + note : note;
     });
   });
-  // Excel จาก FMIS: เติมชื่อ/เลขบัตร/ยอดเงิน/วันที่ (ไม่เปลี่ยนสถานะของพัสดุเดิม)
-  parsed.filter((x) => x.type === 'fmis').forEach((m) => m.parcels.forEach((r) => {
-    let p = get(r.id); const isNew = !p;
-    if (isNew) {
-      p = { id: r.id, sendDate: r.sendDate, issuedAt: r.issuedAt, train: r.train, loadDate: '', originCode: r.originCode || CONFIG.STATION_CODE, originName: r.originName || CONFIG.STATION_NAME,
-        destCode: r.destCode, destName: r.destName, senderName: '', senderPhone: '', senderAddr: '', receiverName: '', receiverPhone: '', receiverAddr: '',
-        items: [], weight: 0, fee: 0, eta: '', status: 'received', events: [] };
-      p = setStatus(p, 'received', '', r.issuedAt || r.sendDate);
-    }
-    ['senderName', 'senderPhone', 'receiverName', 'receiverPhone', 'senderIdNo', 'receiverIdNo'].forEach((k) => { if (r[k]) p[k] = r[k]; });
-    fillIfEmpty(p, r, ['sendDate', 'issuedAt', 'destCode', 'destName', 'train']);
-    if (r.fee) p.fee = r.fee;
-    byId[r.id] = p; touched[r.id] = true;
-    const n = (isNew ? 'ใหม่ (Excel FMIS)' : 'อัปเดตจาก Excel FMIS') + (r.senderIdNo ? ' · 🪪 มีเลขบัตร' : ' · ไม่มีเลขบัตร');
-    notes[r.id] = notes[r.id] ? notes[r.id] + ' · ' + n : n;
-  }));
   return Object.keys(touched).map((id) => ({ p: byId[id], note: notes[id], isNew: !Staff.parcels.some((x) => x.id === id) }));
 }
 
@@ -392,10 +371,9 @@ function paneImport() {
     <h2 style="margin-top:0">นำเข้าไฟล์ PDF จากระบบรถไฟ</h2>
     <p class="hint" style="margin-top:-6px">เลือกได้ทีละหลายไฟล์ ระบบจะแยกประเภทให้อัตโนมัติ<br>
       • <b>ใบส่งของ/ใบเสร็จรับเงิน</b> → เพิ่มพัสดุใหม่ สถานะ “รับฝากแล้ว” พร้อมชื่อ/เบอร์ผู้ส่งผู้รับ<br>
-      • <b>ใบนำมอบสินค้าห่อวัตถุ (รวม)</b> → เปลี่ยนทุกพัสดุในใบเป็น “ขึ้นขบวนรถแล้ว” ตามขบวนในใบ<br>
-      • <b>ไฟล์ Excel จาก FMIS</b> (เช่น FMIS_Parcel_Sent_4419_….xlsx) → เพิ่ม/อัปเดตเลขที่ ชื่อผู้ส่ง ยอดเงิน และ <b>เลขบัตรประชาชนผู้ส่ง</b> (เก็บแบบเข้ารหัส ลูกค้าใช้เป็นรหัสผ่านได้)</p>
-    <label class="drop" id="drop"><input type="file" id="files" accept="application/pdf,.pdf,.xlsx,.xls,.csv" multiple hidden>
-      <div style="font-size:30px">📄</div><b>แตะเพื่อเลือกไฟล์ PDF หรือ Excel</b><div class="hint">หรือลากไฟล์มาวางที่นี่</div></label>
+      • <b>ใบนำมอบสินค้าห่อวัตถุ (รวม)</b> → เปลี่ยนทุกพัสดุในใบเป็น “ขึ้นขบวนรถแล้ว” ตามขบวนในใบ</p>
+    <label class="drop" id="drop"><input type="file" id="files" accept="application/pdf" multiple hidden>
+      <div style="font-size:30px">📄</div><b>แตะเพื่อเลือกไฟล์ PDF</b><div class="hint">หรือลากไฟล์มาวางที่นี่</div></label>
     <div id="pv" style="margin-top:14px">${pv ? previewHtml(pv) : ''}</div></div>
   <div class="card" style="margin-top:14px">
     <h2 style="margin-top:0">นำเข้าจากตารางรายการใบส่งของ (ข้อความ / รูปภาพ)</h2>
@@ -415,24 +393,8 @@ function paneImport() {
   inp.onchange = () => handleFiles([...inp.files]);
   drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('over'); };
   drop.ondragleave = () => drop.classList.remove('over');
-  drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove('over'); handleFiles([...e.dataTransfer.files].filter((f) => /\.(pdf|xlsx|xls|csv)$/i.test(f.name) || /pdf$/i.test(f.type))); };
+  drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove('over'); handleFiles([...e.dataTransfer.files].filter((f) => /pdf$/i.test(f.type) || /\.pdf$/i.test(f.name))); };
   if (pv) bindPreview();
-}
-
-// อ่านไฟล์ Excel/CSV เป็นอาร์เรย์ของแถว (โหลด SheetJS เมื่อใช้ครั้งแรก)
-let xlsxLoading = null;
-async function sheetRows(file) {
-  if (!window.XLSX) {
-    xlsxLoading = xlsxLoading || new Promise((ok, bad) => {
-      const s = document.createElement('script'); s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
-      s.onload = ok; s.onerror = () => { xlsxLoading = null; bad(new Error('โหลดตัวอ่าน Excel ไม่สำเร็จ (ตรวจอินเทอร์เน็ต)')); };
-      document.head.appendChild(s);
-    });
-    await xlsxLoading;
-  }
-  const wb = XLSX.read(new Uint8Array(await file.arrayBuffer()), { type: 'array', raw: false });
-  const ws = wb.Sheets[wb.SheetNames[0]];
-  return XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
 }
 
 async function handleFiles(files) {
@@ -440,18 +402,10 @@ async function handleFiles(files) {
   $('#pv').innerHTML = `<p>กำลังอ่าน ${files.length} ไฟล์…</p>`;
   const parsed = [], errors = [];
   for (const f of files) {
-    try {
-      if (/\.(xlsx|xls|csv)$/i.test(f.name)) {
-        const r = TYMParser.parseFmisRows(await sheetRows(f));
-        if (!r || !r.parcels.length) errors.push(`${f.name}: ไม่พบคอลัมน์ “เลขที่ใบส่ง” (ต้องเป็นไฟล์ที่ส่งออกจาก FMIS)`);
-        else { parsed.push({ ...r, file: f.name }); if (r.badIds.length) errors.push(`${f.name}: เลขบัตรประชาชนไม่ถูกต้อง ข้ามเลขบัตรของ ${r.badIds.join(', ')}`); }
-        continue;
-      }
-      const r = TYMParser.parseLines(await pdfToLines(f)); if (r.type === 'unknown') errors.push(`${f.name}: ไม่ใช่ใบส่งของหรือใบนำมอบ`); else parsed.push({ ...r, file: f.name });
-    }
+    try { const r = TYMParser.parseLines(await pdfToLines(f)); if (r.type === 'unknown') errors.push(`${f.name}: ไม่ใช่ใบส่งของหรือใบนำมอบ`); else parsed.push({ ...r, file: f.name }); }
     catch (e) { errors.push(`${f.name}: ${e.message}`); }
   }
-  Staff.importPreview = { changes: mergeImports(parsed), errors, files: parsed.map((p) => `${p.file} (${p.type === 'manifest' ? `ใบนำมอบ ขบวน ${p.train} · ${p.parcels.length} รายการ` : p.type === 'fmis' ? `Excel FMIS · ${p.parcels.length} รายการ` : 'ใบส่งของ ' + p.parcel.id})`) };
+  Staff.importPreview = { changes: mergeImports(parsed), errors, files: parsed.map((p) => `${p.file} (${p.type === 'manifest' ? `ใบนำมอบ ขบวน ${p.train} · ${p.parcels.length} รายการ` : 'ใบส่งของ ' + p.parcel.id})`) };
   paneImport();
 }
 
@@ -507,8 +461,7 @@ function listPreviewHtml(lp) {
   const opt = (v, cur) => `<option value="${v}" ${v === cur ? 'selected' : ''}>${v ? STATUS[v].label : 'ไม่เปลี่ยน'}</option>`;
   const cell = (i, k, v, w, bad) => `<input data-li="${i}" data-k="${k}" value="${esc(v)}" style="width:${w};${bad ? 'border-color:var(--bad);background:var(--bad-bg)' : ''}">`;
   const nWarn = lp.rows.filter((r) => r.warn.length).length;
-  const nIds = lp.rows.filter((r) => r.senderIdNo || r.receiverIdNo).length;
-  return `<p class="hint">อ่านจาก${esc(lp.source)} ได้ ${lp.rows.length} รายการ${nIds ? ` · 🪪 มีเลขบัตรประชาชน ${nIds} รายการ (เก็บแบบเข้ารหัส)` : ''}${nWarn ? ` · <b style="color:var(--bad)">${nWarn} รายการมีช่องสีแดงที่ต้องตรวจ</b>` : ''} · แก้ไขในตารางได้เลย${lp.source.includes('OCR') ? ' · <b>OCR อาจอ่านตัวเลข/ชื่อผิด กรุณาเทียบกับรูปทุกแถว</b>' : ''}</p>
+  return `<p class="hint">อ่านจาก${esc(lp.source)} ได้ ${lp.rows.length} รายการ${nWarn ? ` · <b style="color:var(--bad)">${nWarn} รายการมีช่องสีแดงที่ต้องตรวจ</b>` : ''} · แก้ไขในตารางได้เลย${lp.source.includes('OCR') ? ' · <b>OCR อาจอ่านตัวเลข/ชื่อผิด กรุณาเทียบกับรูปทุกแถว</b>' : ''}</p>
   <div class="tbl-wrap"><table class="tbl li-tbl"><thead><tr><th>✓</th><th>เลขที่</th><th>ยอดเงิน</th><th>สถานะ</th><th>ผู้ส่ง</th><th>โทรผู้ส่ง</th><th>ผู้รับ</th><th>โทรผู้รับ</th><th></th></tr></thead><tbody>
   ${lp.rows.map((r, i) => {
     const ex = Staff.parcels.find((p) => p.id === r.id);
@@ -553,7 +506,7 @@ function mergeList(rows) {
         items: [], weight: 0, fee: 0, eta: '', status: 'received', events: [] };
       p = setStatus(p, 'received', '', r.sendDate || nowLocalISO());
     }
-    ['senderName', 'senderPhone', 'receiverName', 'receiverPhone', 'senderIdNo', 'receiverIdNo'].forEach((k) => { if (r[k]) p[k] = r[k]; });
+    ['senderName', 'senderPhone', 'receiverName', 'receiverPhone'].forEach((k) => { if (r[k]) p[k] = r[k]; });
     if (r.fee) p.fee = r.fee;
     if (!p.sendDate && r.sendDate) p.sendDate = r.sendDate;
     if (r.status && (RANK[r.status] || 0) > (RANK[p.status] || 0)) p = setStatus(p, r.status, r.status === 'arrived' && p.destName ? `ถึงสถานี${p.destName}` : '');
